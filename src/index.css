@@ -1,0 +1,64 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;0,9..144,700;1,9..144,400;1,9..144,600&family=Outfit:wght@300;400;500;600&display=swap');
+@import 'tailwindcss';
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --radius-DEFAULT: var(--radius);
+  --font-display: var(--font-fraunces);
+  --font-body: var(--font-outfit);
+}
+
+:root {
+  --background: #f5f0e8;
+  --foreground: #2c2416;
+  --card: #fffdf7;
+  --card-foreground: #2c2416;
+  --primary: #4a7c59;
+  --primary-foreground: #f5f0e8;
+  --secondary: #c8956c;
+  --secondary-foreground: #fffdf7;
+  --muted: #e8e0d0;
+  --muted-foreground: #7a6a52;
+  --accent: #b84c4c;
+  --accent-foreground: #fffdf7;
+  --border: #d4c8b0;
+  --ring: #4a7c59;
+  --radius: 0.5rem;
+  --font-fraunces: 'Fraunces', serif;
+  --font-outfit: 'Outfit', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-outfit);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-family: var(--font-fraunces);
+}
+
+/* Hide scrollbars until hover */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.hide-scroll { overflow-y: auto; scrollbar-width: none; }
+.hide-scroll::-webkit-scrollbar { display: none; }

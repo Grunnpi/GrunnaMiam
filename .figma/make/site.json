@@ -1,0 +1,10 @@
+{
+  "description": "Search and manage recipes by specifying required, optional, included, or excluded ingredients with fun tags for personalized cooking inspiration.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
