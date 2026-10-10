@@ -1,5 +1,7 @@
 {
+  "title": "Mes Recettes",
   "description": "Search and manage recipes by specifying required, optional, included, or excluded ingredients with fun tags for personalized cooking inspiration.",
+  "language": "fr",
   "robots": {
     "index": false
   },
