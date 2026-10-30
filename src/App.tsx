@@ -1,4 +1,5 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { deleteRecipes, loadData, onRetry, saveLists, saveRecipe } from "./api";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type IngredientRole = "required" | "optional" | "excluded";
@@ -19,7 +20,7 @@ interface Ingredient {
   quantity: string;
 }
 
-interface Recipe {
+export interface Recipe {
   id: number;
   title: string;
   image: string;
@@ -32,7 +33,7 @@ interface Recipe {
   steps: Step[];
 }
 
-interface PreferenceList {
+export interface PreferenceList {
   id: number;
   name: string;
   recipeIds: number[];
@@ -2024,7 +2025,7 @@ function RecipeDataManager({
                 <div>
                   <h3 className="font-display text-base text-[var(--accent)]">Supprimer toutes les recettes</h3>
                   <p className="text-xs leading-relaxed text-[var(--muted-foreground)] mt-1">
-                    Cette action vide entièrement la collection en mémoire.
+                    Cette action vide entièrement la collection (sur le serveur également).
                   </p>
                 </div>
                 {confirmDelete ? (
@@ -2489,9 +2490,109 @@ type AppView =
   | { name: "form"; recipe: Recipe | null };  // null = new recipe
 
 export default function App() {
-  const [recipes, setRecipes] = useState<Recipe[]>(ALL_RECIPES);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [preferenceLists, setPreferenceLists] = useState<PreferenceList[]>([]);
   const [view, setView] = useState<AppView>({ name: "list" });
+  const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
+  const [loadError, setLoadError] = useState("");
+  const [syncTick, setSyncTick] = useState(0);
+
+  // Dernier état connu du serveur : permet de n'envoyer que ce qui a changé.
+  const synced = useRef({ recipes: new Map<number, string>(), lists: "[]" });
+  // Les envois sont exécutés l'un après l'autre, dans l'ordre.
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  function enqueue(job: () => Promise<void>) {
+    queue.current = queue.current.then(job).catch(() => {});
+  }
+
+  function loadFromServer(isCancelled: () => boolean = () => false) {
+    setLoadState("loading");
+    loadData()
+      .then((data) => {
+        if (isCancelled()) return;
+        synced.current = {
+          recipes: new Map(data.recipes.map((r) => [r.id, JSON.stringify(r)] as const)),
+          lists: JSON.stringify(data.preferenceLists),
+        };
+        // Premier démarrage : le serveur est vide, on le remplit avec les recettes d'exemple.
+        setRecipes(data.initialized ? data.recipes : ALL_RECIPES);
+        setPreferenceLists(data.preferenceLists);
+        setLoadState("ready");
+      })
+      .catch((error) => {
+        if (isCancelled()) return;
+        setLoadError(error instanceof Error ? error.message : "erreur inconnue");
+        setLoadState("error");
+      });
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    loadFromServer(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => onRetry(() => setSyncTick((tick) => tick + 1)), []);
+
+  // Synchronisation automatique : chaque modification (création, édition, import,
+  // suppression, listes…) est comparée au dernier état du serveur puis envoyée.
+  useEffect(() => {
+    if (loadState !== "ready") return;
+    const known = synced.current;
+
+    const currentIds = new Set(recipes.map((r) => r.id));
+    const toDelete = [...known.recipes.keys()].filter((id) => !currentIds.has(id));
+    if (toDelete.length > 0) {
+      const previous = toDelete.map((id) => [id, known.recipes.get(id)!] as const);
+      toDelete.forEach((id) => known.recipes.delete(id));
+      enqueue(async () => {
+        try {
+          await deleteRecipes(toDelete);
+        } catch {
+          previous.forEach(([id, json]) => known.recipes.set(id, json));
+        }
+      });
+    }
+
+    for (const recipe of recipes) {
+      const sent = JSON.stringify(recipe);
+      const previous = known.recipes.get(recipe.id);
+      if (previous === sent) continue;
+      known.recipes.set(recipe.id, sent); // marquée « en cours d'envoi »
+      enqueue(async () => {
+        try {
+          const stored = await saveRecipe(recipe);
+          const storedJson = JSON.stringify(stored);
+          known.recipes.set(stored.id, storedJson);
+          if (storedJson !== sent) {
+            // Les photos sont désormais stockées sur le serveur : on remplace les data-URLs par leurs liens.
+            setRecipes((current) =>
+              current.map((r) => (r.id === stored.id && JSON.stringify(r) === sent ? stored : r))
+            );
+          }
+        } catch {
+          // Échec : on oublie l'envoi, il sera retenté au prochain changement ou via « Réessayer ».
+          if (previous === undefined) known.recipes.delete(recipe.id);
+          else known.recipes.set(recipe.id, previous);
+        }
+      });
+    }
+
+    const listsJson = JSON.stringify(preferenceLists);
+    if (listsJson !== known.lists) {
+      const previous = known.lists;
+      known.lists = listsJson;
+      enqueue(async () => {
+        try {
+          await saveLists(preferenceLists);
+        } catch {
+          known.lists = previous;
+        }
+      });
+    }
+  }, [recipes, preferenceLists, loadState, syncTick]);
   const tagSuggestions = useMemo(
     () =>
       Array.from(
@@ -2609,6 +2710,29 @@ export default function App() {
     };
   }
 
+  if (loadState !== "ready") {
+    return (
+      <div className="min-h-screen bg-[var(--background)] flex items-center justify-center p-6">
+        {loadState === "loading" ? (
+          <p className="text-sm text-[var(--muted-foreground)]">Chargement des recettes…</p>
+        ) : (
+          <div className="max-w-sm text-center space-y-3">
+            <h1 className="font-display text-2xl">Serveur injoignable</h1>
+            <p className="text-sm text-[var(--muted-foreground)]">
+              Impossible de charger les recettes ({loadError}). Vérifiez que le serveur est démarré.
+            </p>
+            <button
+              onClick={() => loadFromServer()}
+              className="bg-[var(--primary)] text-[var(--primary-foreground)] px-4 py-2 rounded-xl text-sm font-medium hover:opacity-90 transition-opacity"
+            >
+              Réessayer
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   if (view.name === "form") {
     const fromDetail = view.recipe !== null;
     return (
@@ -2629,11 +2753,13 @@ export default function App() {
   if (view.name === "detail") {
     return (
       <RecipeDetail
-        recipe={view.recipe}
+        recipe={recipes.find((r) => r.id === view.recipe.id) ?? view.recipe}
         recipes={recipes}
         preferenceLists={preferenceLists}
         onBack={() => setView({ name: "list" })}
-        onEdit={() => setView({ name: "form", recipe: view.recipe })}
+        onEdit={() =>
+          setView({ name: "form", recipe: recipes.find((r) => r.id === view.recipe.id) ?? view.recipe })
+        }
         onCreateList={createPreferenceList}
         onToggleListRecipe={toggleRecipeInList}
         onDeleteList={deletePreferenceList}

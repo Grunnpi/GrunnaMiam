@@ -1,4 +1,4 @@
-const CACHE_NAME = "mes-recettes-v1";
+const CACHE_NAME = "mes-recettes-v2";
 const APP_SCOPE = self.registration.scope;
 const APP_SHELL = new URL("./", APP_SCOPE).href;
 const CORE_ASSETS = [
@@ -46,6 +46,11 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   if (request.method !== "GET") return;
+
+  // Les données de l'API ne doivent jamais venir du cache (sinon on verrait d'anciennes recettes).
+  // Seules les images (/api/images/<hash>), immuables, peuvent être mises en cache.
+  const { pathname } = new URL(request.url);
+  if (pathname.includes("/api/") && !pathname.includes("/api/images/")) return;
 
   if (request.mode === "navigate") {
     event.respondWith(

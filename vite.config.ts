@@ -2,9 +2,8 @@ import { defineConfig, type HtmlTagDescriptor, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
-//import basicSsl from '@vitejs/plugin-basic-ssl'
-import { VitePWA } from 'vite-plugin-pwa'
 
+import { createApi } from './server/api.mjs'
 import siteConfiguration from './.figma/make/site.json'
 
 // Vite config — https://vitejs.dev/config/
@@ -21,39 +20,11 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       tailwindcss(),
-      //basicSsl(),
-      VitePWA({
-        registerType: 'autoUpdate',
-        includeAssets: ['favicon.ico', 'robots.txt'],
-        devOptions: {
-          enabled: true,
-          navigateFallback: 'index.html',
-        },
-        manifest: {
-          name: siteConfiguration.title || 'Figma Make App',
-          short_name: 'App',
-          description: siteConfiguration.description || '',
-          theme_color: '#ffffff',
-          background_color: '#ffffff',
-          display: 'standalone',
-          icons: [
-            {
-              src: siteConfiguration.icons?.icon || '/icon.png',
-              sizes: '192x192',
-              type: 'image/png'
-            },
-            {
-              src: siteConfiguration.icons?.icon || '/icon.png',
-              sizes: '512x512',
-              type: 'image/png'
-            }
-          ]
-        }
-      }),
       figmaSiteConfiguration(siteConfiguration),
       figmaErrorOverlayReplay(),
       figmaReactRefreshBoundaryFallback(),
       figmaMakeKitPlugin({ storiesGlob: '/src/**/*.stories.{ts,tsx,js,jsx}' }),
+      recipesApi(),
     ],
     resolve: {
       alias: {
@@ -61,23 +32,52 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      https: false,
       host: process.env.FIGMA_DEV_SERVER_HOST || '0.0.0.0',
       port: parseInt(process.env.PORT || '8443'),
       strictPort: true,
       watch: {
         ignored: [
           '**/.figma/**',
-        ],
+          '**/data/**',
+],
       },
     },
     preview: {
-      https: false,
       host: process.env.FIGMA_DEV_SERVER_HOST || '0.0.0.0',
       port: parseInt(process.env.PORT || '8443'),
     },
   }
 })
+
+/**
+ * Monte l'API de persistance (server/api.mjs) dans le serveur Vite, pour que
+ * `npm run dev` et `npm run preview` aient un vrai backend sans rien lancer d'autre.
+ * Les données sont écrites dans ./data (ou DATA_DIR).
+ */
+function recipesApi(): Plugin {
+  const api = createApi({
+    dataDir: process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.resolve(__dirname, 'data'),
+  })
+  const middleware = (
+    req: import('node:http').IncomingMessage,
+    res: import('node:http').ServerResponse,
+    next: (error?: unknown) => void,
+  ) => {
+    api.handle(req, res).then((handled) => {
+      if (!handled) next()
+    }, next)
+  }
+
+  return {
+    name: 'recipes-api',
+    configureServer(server) {
+      server.middlewares.use(middleware)
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(middleware)
+    },
+  }
+}
 
 type FigmaSiteConfiguration = {
   title?: string
