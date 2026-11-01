@@ -6,12 +6,15 @@
 //   HOST      interface d'écoute       (défaut : 0.0.0.0)
 //   DATA_DIR  dossier des données      (défaut : <projet>/data)
 //   DIST_DIR  dossier du site compilé  (défaut : <projet>/dist)
+//   UPDATE_TOKEN             active la mise à jour depuis l'application (jeton à saisir dans l'app)
+//   GRUNNAMIAM_SUPERVISED=1  le serveur est relancé par deploy/start-synology.sh après une mise à jour
 
 import http from "node:http";
 import { promises as fs, createReadStream } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createApi } from "./api.mjs";
+import { createUpdater } from "./update.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PORT = Number(process.env.PORT) || 3100;
@@ -38,7 +41,14 @@ const MIME = {
   ".woff2": "font/woff2",
 };
 
-const api = createApi({ dataDir: DATA_DIR });
+const updater = process.env.UPDATE_TOKEN
+  ? createUpdater({
+      rootDir: ROOT,
+      token: process.env.UPDATE_TOKEN,
+      supervised: process.env.GRUNNAMIAM_SUPERVISED === "1",
+    })
+  : undefined;
+const api = createApi({ dataDir: DATA_DIR, rootDir: ROOT, updater });
 
 function plain(res, status, message) {
   res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8" });
@@ -102,6 +112,7 @@ server.listen(PORT, HOST, () => {
   console.log(`[${new Date().toISOString()}] GrunnaMiam démarré sur http://${HOST}:${PORT}`);
   console.log(`  site    : ${DIST_DIR}`);
   console.log(`  données : ${DATA_DIR}`);
+  console.log(`  mise à jour depuis l'app : ${updater ? (updater.supervised ? "activée (redémarrage auto)" : "activée (redémarrage manuel)") : "désactivée (UPDATE_TOKEN absent)"}`);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"]) {

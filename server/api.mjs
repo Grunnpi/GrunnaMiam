@@ -7,7 +7,8 @@
 // Utilisé à la fois par le serveur de production (server/index.mjs)
 // et par le serveur Vite (npm run dev / npm run preview).
 
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
+import { execFile } from "node:child_process";
 import path from "node:path";
 import crypto from "node:crypto";
 
@@ -101,11 +102,28 @@ function sendJson(res, status, body) {
 }
 
 /**
- * @param {{ dataDir: string }} options
+ * @param {{ dataDir: string, rootDir?: string, updater?: ReturnType<typeof import("./update.mjs").createUpdater> }} options
  */
-export function createApi({ dataDir }) {
+export function createApi({ dataDir, rootDir, updater }) {
   const dbFile = path.join(dataDir, "db.json");
   const imagesDir = path.join(dataDir, "images");
+
+  // Informations sur le processus en cours : version, commit git et heure de démarrage.
+  const startedAt = new Date().toISOString();
+  let version = "0.0.0";
+  let commitPromise = Promise.resolve(null);
+  if (rootDir) {
+    try {
+      version = JSON.parse(readFileSync(path.join(rootDir, "package.json"), "utf8")).version ?? version;
+    } catch {
+      /* package.json illisible : on garde la valeur par défaut */
+    }
+    commitPromise = new Promise((resolve) => {
+      execFile("git", ["rev-parse", "--short", "HEAD"], { cwd: rootDir, windowsHide: true }, (error, stdout) =>
+        resolve(error ? null : stdout.trim() || null)
+      );
+    });
+  }
 
   /** @type {{ initialized: boolean, recipes: any[], preferenceLists: any[] } | null} */
   let db = null;
@@ -241,6 +259,24 @@ export function createApi({ dataDir }) {
       return sendJson(res, 200, { ok: true });
     }
 
+    if (pathname === "/api/info" && method === "GET") {
+      return sendJson(res, 200, {
+        version,
+        commit: await commitPromise,
+        startedAt,
+        updateEnabled: Boolean(updater),
+        supervised: Boolean(updater?.supervised),
+      });
+    }
+
+    if (pathname === "/api/update") {
+      if (!updater) throw new HttpError(404, "La mise à jour depuis l'application n'est pas activée sur ce serveur.");
+      updater.assertAuthorized(req);
+      if (method === "GET") return sendJson(res, 200, updater.getStatus());
+      if (method === "POST") return sendJson(res, 202, updater.start());
+      throw new HttpError(405, "Méthode non autorisée.");
+    }
+
     if (pathname === "/api/data" && method === "GET") {
       const data = await withLock(async () => {
         const current = await load();
@@ -315,7 +351,7 @@ export function createApi({ dataDir }) {
     try {
       await route(req, res, pathname);
     } catch (error) {
-      const status = error instanceof HttpError ? error.status : 500;
+      const status = typeof error?.status === "number" ? error.status : 500;
       if (status === 500) console.error("[api]", error);
       if (res.headersSent) res.destroy();
       else sendJson(res, status, { error: status === 500 ? "Erreur interne du serveur." : error.message });

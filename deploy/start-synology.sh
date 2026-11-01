@@ -1,18 +1,23 @@
 #!/bin/sh
-# Lance GrunnaMiam et le relance automatiquement s'il s'arrête.
+# Lance GrunnaMiam et le relance automatiquement dès qu'il s'arrête
+# (crash, ou redémarrage demandé par la mise à jour depuis l'application).
 # Conçu pour être appelé par le Planificateur de tâches du Synology (déclencheur : démarrage).
 #
-# Réglages possibles (variables d'environnement, ou à modifier ci-dessous) :
-#   PORT      port d'écoute (défaut 3100)
-#   DATA_DIR  dossier des données (défaut : <app>/data)
-#   NODE_BIN  chemin de node (défaut : détecté automatiquement)
+# Réglages : créez deploy/config.sh (copie de config.example.sh, non versionné) plutôt que
+# de modifier ce fichier, qui est mis à jour par git pull.
 
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)" || exit 1
 cd "$APP_DIR" || exit 1
 
-export PORT="${PORT:-3100}"
+# Réglages locaux (UPDATE_TOKEN, PORT, DATA_DIR, NODE_BIN…)
+[ -f "$APP_DIR/deploy/config.sh" ] && . "$APP_DIR/deploy/config.sh"
 
-# Sur le Synology, node est généralement dans /usr/local/bin (le Planificateur n'a pas toujours le bon PATH).
+export PORT="${PORT:-3100}"
+# Indique au serveur qu'une boucle de relance existe : il peut donc se terminer après une mise à jour.
+export GRUNNAMIAM_SUPERVISED=1
+
+# Sur le Synology, node et git sont généralement dans /usr/local/bin ou /usr/bin
+# (le Planificateur de tâches n'a pas toujours le bon PATH).
 export PATH="$PATH:/usr/local/bin:/usr/bin:/bin"
 NODE_BIN="${NODE_BIN:-$(command -v node)}"
 if [ -z "$NODE_BIN" ]; then
@@ -36,6 +41,6 @@ while true; do
   "$NODE_BIN" server/index.mjs >> "$LOG" 2>&1 &
   CHILD=$!
   wait "$CHILD"
-  echo "[$(date)] le serveur s'est arrêté (code $?), relance dans 5 s" >> "$LOG"
-  sleep 5
+  echo "[$(date)] le serveur s'est arrêté (code $?), relance dans 3 s" >> "$LOG"
+  sleep 3
 done

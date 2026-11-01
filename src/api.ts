@@ -52,12 +52,24 @@ export function dismissError() {
 }
 
 // ── Requêtes ───────────────────────────────────────────────────────────────
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}, tracked = true): Promise<T> {
   if (tracked) setState({ pending: state.pending + 1 });
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: init.body ? { "Content-Type": "application/json" } : undefined,
+      headers: {
+        ...(init.body ? { "Content-Type": "application/json" } : {}),
+        ...(init.headers as Record<string, string> | undefined),
+      },
     });
     if (!response.ok) {
       let detail = "";
@@ -66,7 +78,7 @@ async function request<T>(path: string, init: RequestInit = {}, tracked = true):
       } catch {
         /* réponse non JSON */
       }
-      throw new Error(detail || `HTTP ${response.status}`);
+      throw new ApiError(detail || `HTTP ${response.status}`, response.status);
     }
     const result = (await response.json()) as T;
     if (tracked && state.error) setState({ error: null });
@@ -90,3 +102,55 @@ export const deleteRecipes = (ids: number[]) =>
 
 export const saveLists = (lists: PreferenceList[]) =>
   request<{ ok: true }>("/lists", { method: "PUT", body: JSON.stringify(lists) });
+
+// ── Informations serveur & mise à jour ──
+
+export interface ServerInfo {
+  version: string;
+  /** Commit git du code en cours d'exécution (null si git est indisponible). */
+  commit: string | null;
+  /** Heure de démarrage du serveur (ISO 8601). */
+  startedAt: string;
+  updateEnabled: boolean;
+  supervised: boolean;
+}
+
+export interface UpdateStatus {
+  state: "idle" | "running" | "success" | "error";
+  startedAt: string | null;
+  finishedAt: string | null;
+  steps: { id: string; label: string; state: "pending" | "running" | "done" | "skipped" | "error" }[];
+  log: string[];
+  restarting: boolean;
+  changed: boolean;
+  message: string;
+}
+
+export const loadInfo = () => request<ServerInfo>("/info", { cache: "no-store" }, false);
+
+const TOKEN_KEY = "grunnamiam.updateToken";
+
+export function getUpdateToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setUpdateToken(token: string | null) {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* stockage indisponible : le jeton sera redemandé */
+  }
+}
+
+const authHeaders = () => ({ Authorization: `Bearer ${getUpdateToken() ?? ""}` });
+
+export const fetchUpdateStatus = () =>
+  request<UpdateStatus>("/update", { cache: "no-store", headers: authHeaders() }, false);
+
+export const startUpdate = () =>
+  request<UpdateStatus>("/update", { method: "POST", headers: authHeaders() }, false);

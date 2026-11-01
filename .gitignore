@@ -16,6 +16,11 @@ logs/
 # Données de l'application (recettes, images) — ne jamais versionner
 /data/
 
+# Réglages locaux du serveur (contient le jeton de mise à jour) et dossiers temporaires de la mise à jour
+/deploy/config.sh
+/dist-next/
+/dist-old/
+
 # Platform-managed agentplat state, not project source. In the
 # client-initiated single-repo workspace layout (make's `Path: "."` spec) the
 # repo root IS the workspace root, so these land inside this repo rather than

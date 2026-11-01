@@ -57,6 +57,7 @@ export default defineConfig(({ mode }) => {
 function recipesApi(): Plugin {
   const api = createApi({
     dataDir: process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.resolve(__dirname, 'data'),
+    rootDir: __dirname,
   })
   const middleware = (
     req: import('node:http').IncomingMessage,

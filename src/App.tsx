@@ -1,5 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { deleteRecipes, loadData, onRetry, saveLists, saveRecipe } from "./api";
+import UpdatePanel from "./UpdatePanel";
+import VersionBadge from "./VersionBadge";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type IngredientRole = "required" | "optional" | "excluded";
@@ -2021,6 +2023,8 @@ function RecipeDataManager({
                 />
               </section>
 
+              <UpdatePanel />
+
               <section className="space-y-3 border-t border-[var(--border)] pt-5">
                 <div>
                   <h3 className="font-display text-base text-[var(--accent)]">Supprimer toutes les recettes</h3>
@@ -2200,6 +2204,7 @@ function SearchView({
           <div>
             <h1 className="font-display text-2xl sm:text-3xl text-[var(--foreground)] leading-none">Recettes</h1>
             <p className="text-xs text-[var(--muted-foreground)] mt-0.5">par ingrédients</p>
+            <VersionBadge />
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs bg-[var(--muted)] text-[var(--muted-foreground)] px-2 py-1 rounded-full hidden sm:inline">
