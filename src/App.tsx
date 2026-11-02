@@ -1441,6 +1441,7 @@ function RecipeDetail({
   preferenceLists,
   onBack,
   onEdit,
+  onDelete,
   onCreateList,
   onToggleListRecipe,
   onDeleteList,
@@ -1450,6 +1451,7 @@ function RecipeDetail({
   preferenceLists: PreferenceList[];
   onBack: () => void;
   onEdit: () => void;
+  onDelete: () => void;
   onCreateList: (name: string, recipeId?: number) => void;
   onToggleListRecipe: (listId: number, recipeId: number) => void;
   onDeleteList: (listId: number) => void;
@@ -1458,6 +1460,7 @@ function RecipeDetail({
     () => new Set(recipe.steps.map((_, i) => i))
   );
   const { canEdit } = useAuth();
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   function toggleStep(i: number) {
     setOpenSteps((prev) => {
@@ -1492,12 +1495,54 @@ function RecipeDetail({
             onDelete={onDeleteList}
           />
           {canEdit && (
+          <>
           <button
             onClick={onEdit}
             className="shrink-0 text-xs border border-[var(--border)] text-[var(--muted-foreground)] px-3 py-1.5 rounded-lg hover:border-[var(--primary)] hover:text-[var(--primary)] transition-colors"
           >
             ✏ Modifier
           </button>
+          <button
+            onClick={() => setConfirmDelete(true)}
+            className="shrink-0 text-xs border border-[var(--border)] text-[var(--muted-foreground)] px-3 py-1.5 rounded-lg hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+          >
+            🗑 Supprimer
+          </button>
+          {confirmDelete && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <button
+                type="button"
+                aria-label="Annuler"
+                onClick={() => setConfirmDelete(false)}
+                className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+              />
+              <div className="relative w-full max-w-sm space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5 shadow-2xl">
+                <div>
+                  <h2 className="font-display text-xl">Supprimer cette recette ?</h2>
+                  <p className="mt-2 text-sm leading-relaxed text-[var(--muted-foreground)]">
+                    « {recipe.title} » sera supprimée définitivement, ainsi que ses photos et sa place dans les listes.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(false)}
+                    className={`${btnOutline} flex-1 py-2`}
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onDelete}
+                    className="flex-1 rounded-lg bg-[var(--accent)] px-3 py-2 text-xs font-medium text-white hover:opacity-90"
+                  >
+                    Supprimer
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          </>
           )}
         </div>
       </header>
@@ -2719,6 +2764,19 @@ export default function App() {
     setPreferenceLists((currentLists) => currentLists.filter((list) => list.id !== listId));
   }
 
+  function deleteRecipe(recipeId: number) {
+    if (!canEdit) return;
+    setRecipes((current) => current.filter((recipe) => recipe.id !== recipeId));
+    setPreferenceLists((current) =>
+      current.map((list) =>
+        list.recipeIds.includes(recipeId)
+          ? { ...list, recipeIds: list.recipeIds.filter((id) => id !== recipeId) }
+          : list
+      )
+    );
+    setView({ name: "list" });
+  }
+
   async function handleImport(file: File, mode: ImportMode) {
     const imported = await importRecipesArchive(file);
 
@@ -2817,6 +2875,7 @@ export default function App() {
         onEdit={() =>
           setView({ name: "form", recipe: recipes.find((r) => r.id === view.recipe.id) ?? view.recipe })
         }
+        onDelete={() => deleteRecipe(view.recipe.id)}
         onCreateList={createPreferenceList}
         onToggleListRecipe={toggleRecipeInList}
         onDeleteList={deletePreferenceList}
