@@ -1,9 +1,9 @@
 // Mise à jour de l'application depuis l'application elle-même :
 //   git pull  ->  npm ci (seulement si package-lock.json a changé)  ->  npm run build  ->  redémarrage
 //
-// Sécurité : activé uniquement si la variable UPDATE_TOKEN est définie, et chaque appel
-// doit présenter ce jeton (Authorization: Bearer <jeton>). Aucune commande n'est
-// construite à partir de données envoyées par le navigateur : les étapes sont fixes.
+// Sécurité : seule une session administrateur peut la lancer (contrôle fait dans server/api.mjs).
+// Aucune commande n'est construite à partir de données envoyées par le navigateur :
+// les étapes sont fixes.
 //
 // Redémarrage : le serveur se termine proprement (SIGTERM) et c'est le script
 // deploy/start-synology.sh (boucle de relance) qui le relance. Sans ce superviseur
@@ -17,8 +17,6 @@ import path from "node:path";
 const MAX_LOG_LINES = 400;
 const COMMAND_TIMEOUT_MS = 20 * 60 * 1000;
 const RESTART_DELAY_MS = 2500;
-const MAX_FAILED_ATTEMPTS = 10;
-const FAILED_WINDOW_MS = 60 * 1000;
 
 const STEP_DEFS = [
   { id: "pull", label: "git pull" },
@@ -31,26 +29,22 @@ function httpError(status, message) {
   return Object.assign(new Error(message), { status });
 }
 
-const sha256 = (value) => crypto.createHash("sha256").update(value).digest();
 const exists = (file) => fs.access(file).then(() => true, () => false);
 
 /**
- * @param {{ rootDir: string, token: string, supervised: boolean }} options
+ * @param {{ rootDir: string, supervised: boolean }} options
  */
-export function createUpdater({ rootDir, token, supervised }) {
+export function createUpdater({ rootDir, supervised }) {
   const isWindows = process.platform === "win32";
   const distDir = path.join(rootDir, "dist");
   const nextDir = path.join(rootDir, "dist-next");
   const oldDir = path.join(rootDir, "dist-old");
 
-  // Environnement des commandes : NODE_ENV=production ferait ignorer les devDependencies (vite…),
-  // et le jeton n'a rien à faire dans les processus enfants.
+  // Environnement des commandes : NODE_ENV=production ferait ignorer les devDependencies (vite…).
   const childEnv = { ...process.env };
   delete childEnv.NODE_ENV;
-  delete childEnv.UPDATE_TOKEN;
 
   let status = freshStatus();
-  const failedAttempts = [];
 
   function freshStatus() {
     return {
@@ -190,20 +184,6 @@ export function createUpdater({ rootDir, token, supervised }) {
 
   return {
     supervised,
-
-    /** Lève une erreur 401 (jeton absent/incorrect) ou 429 (trop d'essais). */
-    assertAuthorized(req) {
-      const now = Date.now();
-      while (failedAttempts.length && now - failedAttempts[0] > FAILED_WINDOW_MS) failedAttempts.shift();
-      if (failedAttempts.length >= MAX_FAILED_ATTEMPTS) throw httpError(429, "Trop de tentatives, réessayez dans une minute.");
-
-      const header = req.headers.authorization ?? "";
-      const given = header.startsWith("Bearer ") ? header.slice(7) : "";
-      if (!crypto.timingSafeEqual(sha256(given), sha256(token))) {
-        failedAttempts.push(now);
-        throw httpError(401, "Jeton de mise à jour incorrect.");
-      }
-    },
 
     getStatus() {
       return status;

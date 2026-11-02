@@ -11,6 +11,7 @@ import { promises as fs, readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import crypto from "node:crypto";
+import { createAuth } from "./auth.mjs";
 
 const IMAGE_EXT = {
   "image/jpeg": "jpg",
@@ -91,12 +92,13 @@ async function readJson(req) {
   }
 }
 
-function sendJson(res, status, body) {
+function sendJson(res, status, body, extraHeaders = {}) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(payload),
     "Cache-Control": "no-store",
+    ...extraHeaders,
   });
   res.end(payload);
 }
@@ -107,6 +109,7 @@ function sendJson(res, status, body) {
 export function createApi({ dataDir, rootDir, updater }) {
   const dbFile = path.join(dataDir, "db.json");
   const imagesDir = path.join(dataDir, "images");
+  const auth = createAuth({ dataDir });
 
   // Informations sur le processus en cours : version, commit git et heure de démarrage.
   const startedAt = new Date().toISOString();
@@ -255,6 +258,11 @@ export function createApi({ dataDir, rootDir, updater }) {
     const method = req.method ?? "GET";
     let match;
 
+    // Protection CSRF en plus du cookie SameSite=Lax : on refuse toute écriture venant d'un autre site.
+    if (method !== "GET" && method !== "HEAD" && req.headers["sec-fetch-site"] === "cross-site") {
+      throw new HttpError(403, "Requête inter-sites refusée.");
+    }
+
     if (pathname === "/api/health" && method === "GET") {
       return sendJson(res, 200, { ok: true });
     }
@@ -271,10 +279,58 @@ export function createApi({ dataDir, rootDir, updater }) {
 
     if (pathname === "/api/update") {
       if (!updater) throw new HttpError(404, "La mise à jour depuis l'application n'est pas activée sur ce serveur.");
-      updater.assertAuthorized(req);
+      await auth.requireAdmin(req);
       if (method === "GET") return sendJson(res, 200, updater.getStatus());
       if (method === "POST") return sendJson(res, 202, updater.start());
       throw new HttpError(405, "Méthode non autorisée.");
+    }
+
+    // ── Comptes et sessions ──
+    if (pathname === "/api/auth/me" && method === "GET") {
+      return sendJson(res, 200, await auth.me(req));
+    }
+
+    if (pathname === "/api/auth/setup" && method === "POST") {
+      const { state, cookie } = await auth.setup(req, await readJson(req));
+      return sendJson(res, 200, state, { "Set-Cookie": cookie });
+    }
+
+    if (pathname === "/api/auth/login" && method === "POST") {
+      const { state, cookie } = await auth.login(req, await readJson(req));
+      return sendJson(res, 200, state, { "Set-Cookie": cookie });
+    }
+
+    if (pathname === "/api/auth/logout" && method === "POST") {
+      return sendJson(res, 200, { user: null, setupRequired: false }, { "Set-Cookie": auth.logoutCookie(req) });
+    }
+
+    if (pathname === "/api/auth/password" && method === "POST") {
+      const user = await auth.requireUser(req);
+      const cookie = await auth.changePassword(req, user, await readJson(req));
+      return sendJson(res, 200, { ok: true }, { "Set-Cookie": cookie });
+    }
+
+    if (pathname === "/api/users" && method === "GET") {
+      await auth.requireAdmin(req);
+      return sendJson(res, 200, await auth.listUsers());
+    }
+
+    if (pathname === "/api/users" && method === "POST") {
+      await auth.requireAdmin(req);
+      return sendJson(res, 201, await auth.createUser(await readJson(req)));
+    }
+
+    if ((match = pathname.match(/^\/api\/users\/(\d+)$/)) && method === "DELETE") {
+      const actor = await auth.requireAdmin(req);
+      await auth.deleteUser(actor, Number(match[1]));
+      return sendJson(res, 200, { ok: true });
+    }
+
+    if ((match = pathname.match(/^\/api\/users\/(\d+)\/password$/)) && method === "POST") {
+      await auth.requireAdmin(req);
+      const body = await readJson(req);
+      await auth.resetPassword(Number(match[1]), body?.password);
+      return sendJson(res, 200, { ok: true });
     }
 
     if (pathname === "/api/data" && method === "GET") {
@@ -294,6 +350,7 @@ export function createApi({ dataDir, rootDir, updater }) {
     }
 
     if ((match = pathname.match(/^\/api\/recipes\/(\d+)$/)) && method === "PUT") {
+      await auth.requireUser(req);
       const body = await readJson(req);
       validateRecipe(body);
       if (body.id !== Number(match[1])) throw new HttpError(400, "Identifiant incohérent.");
@@ -310,6 +367,7 @@ export function createApi({ dataDir, rootDir, updater }) {
     }
 
     if (pathname === "/api/recipes/delete" && method === "POST") {
+      await auth.requireUser(req);
       const body = await readJson(req);
       if (!body || !Array.isArray(body.ids) || !body.ids.every(isNumber)) {
         throw new HttpError(400, "Liste d'identifiants invalide.");
@@ -326,6 +384,7 @@ export function createApi({ dataDir, rootDir, updater }) {
     }
 
     if (pathname === "/api/lists" && method === "PUT") {
+      await auth.requireUser(req);
       const body = await readJson(req);
       validateLists(body);
       await withLock(async () => {

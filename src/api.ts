@@ -18,6 +18,7 @@ interface SyncState {
 let state: SyncState = { pending: 0, error: null };
 const listeners = new Set<() => void>();
 const retryListeners = new Set<() => void>();
+const unauthorizedListeners = new Set<() => void>();
 
 function setState(patch: Partial<SyncState>) {
   state = { ...state, ...patch };
@@ -39,6 +40,14 @@ export function onRetry(callback: () => void) {
   retryListeners.add(callback);
   return () => {
     retryListeners.delete(callback);
+  };
+}
+
+/** Appelé quand le serveur refuse une sauvegarde faute de session valide (session expirée…). */
+export function onUnauthorized(callback: () => void) {
+  unauthorizedListeners.add(callback);
+  return () => {
+    unauthorizedListeners.delete(callback);
   };
 }
 
@@ -84,27 +93,78 @@ async function request<T>(path: string, init: RequestInit = {}, tracked = true):
     if (tracked && state.error) setState({ error: null });
     return result;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "erreur réseau";
-    if (tracked) setState({ error: `Enregistrement impossible : ${message}` });
+    if (tracked) {
+      if (error instanceof ApiError && error.status === 401) {
+        unauthorizedListeners.forEach((listener) => listener());
+        setState({ error: "Session expirée : reconnectez-vous, vos modifications seront alors enregistrées." });
+      } else {
+        const message = error instanceof Error ? error.message : "erreur réseau";
+        setState({ error: `Enregistrement impossible : ${message}` });
+      }
+    }
     throw error;
   } finally {
     if (tracked) setState({ pending: state.pending - 1 });
   }
 }
 
+const post = (body?: unknown): RequestInit => ({
+  method: "POST",
+  body: body === undefined ? undefined : JSON.stringify(body),
+});
+
+// ── Recettes et listes (écriture réservée aux utilisateurs connectés) ─────
 export const loadData = () => request<ServerData>("/data", { cache: "no-store" }, false);
 
 export const saveRecipe = (recipe: Recipe) =>
   request<Recipe>(`/recipes/${recipe.id}`, { method: "PUT", body: JSON.stringify(recipe) });
 
-export const deleteRecipes = (ids: number[]) =>
-  request<{ deleted: number }>("/recipes/delete", { method: "POST", body: JSON.stringify({ ids }) });
+export const deleteRecipes = (ids: number[]) => request<{ deleted: number }>("/recipes/delete", post({ ids }));
 
 export const saveLists = (lists: PreferenceList[]) =>
   request<{ ok: true }>("/lists", { method: "PUT", body: JSON.stringify(lists) });
 
-// ── Informations serveur & mise à jour ──
+// ── Comptes ────────────────────────────────────────────────────────────────
+export interface AuthUser {
+  id: number;
+  username: string;
+  role: "admin" | "user";
+}
 
+export interface AuthState {
+  user: AuthUser | null;
+  /** true tant qu'aucun compte n'existe : il faut créer le premier administrateur. */
+  setupRequired: boolean;
+}
+
+export interface ManagedUser extends AuthUser {
+  createdAt: string;
+}
+
+export const fetchMe = () => request<AuthState>("/auth/me", { cache: "no-store" }, false);
+
+export const setupFirstAdmin = (username: string, password: string) =>
+  request<AuthState>("/auth/setup", post({ username, password }), false);
+
+export const login = (username: string, password: string) =>
+  request<AuthState>("/auth/login", post({ username, password }), false);
+
+export const logout = () => request<AuthState>("/auth/logout", post(), false);
+
+export const changePassword = (current: string, next: string) =>
+  request<{ ok: true }>("/auth/password", post({ current, next }), false);
+
+export const listUsers = () => request<ManagedUser[]>("/users", { cache: "no-store" }, false);
+
+export const createUser = (username: string, password: string, role: AuthUser["role"]) =>
+  request<ManagedUser>("/users", post({ username, password, role }), false);
+
+export const deleteUser = (id: number) => request<{ ok: true }>(`/users/${id}`, { method: "DELETE" }, false);
+
+export const resetUserPassword = (id: number, password: string) =>
+  request<{ ok: true }>(`/users/${id}/password`, post({ password }), false);
+
+// ── Informations serveur & mise à jour (administrateurs) ──────────────────
 export interface ServerInfo {
   version: string;
   /** Commit git du code en cours d'exécution (null si git est indisponible). */
@@ -128,29 +188,6 @@ export interface UpdateStatus {
 
 export const loadInfo = () => request<ServerInfo>("/info", { cache: "no-store" }, false);
 
-const TOKEN_KEY = "grunnamiam.updateToken";
+export const fetchUpdateStatus = () => request<UpdateStatus>("/update", { cache: "no-store" }, false);
 
-export function getUpdateToken(): string | null {
-  try {
-    return localStorage.getItem(TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-export function setUpdateToken(token: string | null) {
-  try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    /* stockage indisponible : le jeton sera redemandé */
-  }
-}
-
-const authHeaders = () => ({ Authorization: `Bearer ${getUpdateToken() ?? ""}` });
-
-export const fetchUpdateStatus = () =>
-  request<UpdateStatus>("/update", { cache: "no-store", headers: authHeaders() }, false);
-
-export const startUpdate = () =>
-  request<UpdateStatus>("/update", { method: "POST", headers: authHeaders() }, false);
+export const startUpdate = () => request<UpdateStatus>("/update", post(), false);

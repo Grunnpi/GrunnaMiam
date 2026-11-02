@@ -1,6 +1,8 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { deleteRecipes, loadData, onRetry, saveLists, saveRecipe } from "./api";
+import { useAuth } from "./auth";
 import UpdatePanel from "./UpdatePanel";
+import UserMenu from "./UserMenu";
 import VersionBadge from "./VersionBadge";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -1455,6 +1457,7 @@ function RecipeDetail({
   const [openSteps, setOpenSteps] = useState<Set<number>>(
     () => new Set(recipe.steps.map((_, i) => i))
   );
+  const { canEdit } = useAuth();
 
   function toggleStep(i: number) {
     setOpenSteps((prev) => {
@@ -1488,12 +1491,14 @@ function RecipeDetail({
             onToggleRecipe={onToggleListRecipe}
             onDelete={onDeleteList}
           />
+          {canEdit && (
           <button
             onClick={onEdit}
             className="shrink-0 text-xs border border-[var(--border)] text-[var(--muted-foreground)] px-3 py-1.5 rounded-lg hover:border-[var(--primary)] hover:text-[var(--primary)] transition-colors"
           >
             ✏ Modifier
           </button>
+          )}
         </div>
       </header>
 
@@ -1646,6 +1651,7 @@ function PreferenceListsPanel({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [newListName, setNewListName] = useState("");
+  const { canEdit } = useAuth();
   const selectedRecipe = recipeId === undefined
     ? null
     : recipes.find((recipe) => recipe.id === recipeId) ?? null;
@@ -1657,6 +1663,9 @@ function PreferenceListsPanel({
     onCreate(name, recipeId);
     setNewListName("");
   }
+
+  // Un visiteur anonyme ne peut pas classer une recette ; il peut seulement consulter les listes.
+  if (recipeId !== undefined && !canEdit) return null;
 
   return (
     <>
@@ -1705,6 +1714,7 @@ function PreferenceListsPanel({
             </div>
 
             <div className="p-5 space-y-5">
+              {canEdit && (
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -1728,6 +1738,7 @@ function PreferenceListsPanel({
                   Créer
                 </button>
               </div>
+              )}
 
               {lists.length === 0 ? (
                 <p className="rounded-xl bg-[var(--muted)] p-4 text-sm text-[var(--muted-foreground)]">
@@ -1806,6 +1817,7 @@ function PreferenceListsPanel({
                                 {isSelected ? "Affichée" : "Afficher"}
                               </button>
                             )}
+                            {canEdit && (
                             <button
                               type="button"
                               onClick={() => onDelete(list.id)}
@@ -1813,6 +1825,7 @@ function PreferenceListsPanel({
                             >
                               Supprimer
                             </button>
+                            )}
                           </div>
                         </div>
                         {listRecipes.length > 0 ? (
@@ -1820,6 +1833,7 @@ function PreferenceListsPanel({
                             {listRecipes.map((recipe) => (
                               <li key={recipe.id} className="flex items-center gap-3 px-4 py-2.5">
                                 <span className="flex-1 truncate text-sm">{recipe.title}</span>
+                                {canEdit && (
                                 <button
                                   type="button"
                                   onClick={() => onToggleRecipe(list.id, recipe.id)}
@@ -1827,6 +1841,7 @@ function PreferenceListsPanel({
                                 >
                                   Retirer
                                 </button>
+                                )}
                               </li>
                             ))}
                           </ul>
@@ -1861,6 +1876,7 @@ function RecipeDataManager({
   onDeleteAll: () => void;
 }) {
   const importInput = useRef<HTMLInputElement>(null);
+  const { canEdit } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [mode, setMode] = useState<ImportMode>("replace");
   const [isWorking, setIsWorking] = useState(false);
@@ -1968,6 +1984,7 @@ function RecipeDataManager({
                 </button>
               </section>
 
+              {canEdit && (
               <section className="space-y-3 border-t border-[var(--border)] pt-5">
                 <div>
                   <h3 className="font-display text-base">Importer un ZIP</h3>
@@ -2022,9 +2039,11 @@ function RecipeDataManager({
                   tabIndex={-1}
                 />
               </section>
+              )}
 
               <UpdatePanel />
 
+              {canEdit && (
               <section className="space-y-3 border-t border-[var(--border)] pt-5">
                 <div>
                   <h3 className="font-display text-base text-[var(--accent)]">Supprimer toutes les recettes</h3>
@@ -2059,6 +2078,7 @@ function RecipeDataManager({
                   </button>
                 )}
               </section>
+              )}
             </div>
           </div>
         </div>
@@ -2068,6 +2088,14 @@ function RecipeDataManager({
 }
 
 // ── Search & List View ─────────────────────────────────────────────────────
+// Minuscules et sans accents : « éclair » trouve « Eclair », « ECLAIR », etc.
+function normalizeText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
 function SearchView({
   recipes,
   preferenceLists,
@@ -2099,6 +2127,8 @@ function SearchView({
   const [tagsExpanded, setTagsExpanded] = useState(false);
   const [previewRecipe, setPreviewRecipe] = useState<Recipe | null>(null);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [titleQuery, setTitleQuery] = useState("");
+  const { canEdit } = useAuth();
 
   const availableIngredients = useMemo(
     () =>
@@ -2172,7 +2202,8 @@ function SearchView({
   }
 
   const filteredRecipes = useMemo(() => {
-    if (filters.length === 0 && selectedTags.length === 0 && !selectedList) return recipes;
+    const titleWords = normalizeText(titleQuery).split(/\s+/).filter(Boolean);
+    if (filters.length === 0 && selectedTags.length === 0 && !selectedList && titleWords.length === 0) return recipes;
 
     const required = filters.filter((f) => f.role === "required").map((f) => f.name);
     const optional = filters.filter((f) => f.role === "optional").map((f) => f.name);
@@ -2183,6 +2214,10 @@ function SearchView({
       const ings = recipe.ingredients.map((i) => i.name.toLowerCase());
       const recipeTags = recipe.tags.map((t) => t.toLowerCase());
 
+      if (titleWords.length > 0) {
+        const title = normalizeText(recipe.title);
+        if (!titleWords.every((word) => title.includes(word))) return false;
+      }
       if (selectedRecipeIds && !selectedRecipeIds.has(recipe.id)) return false;
       if (required.length > 0 && !required.every((r) => ings.some((i) => i.includes(r)))) return false;
       if (excluded.some((e) => ings.some((i) => i.includes(e)))) return false;
@@ -2191,11 +2226,12 @@ function SearchView({
 
       return true;
     });
-  }, [filters, selectedTags, selectedList, recipes]);
+  }, [filters, selectedTags, selectedList, titleQuery, recipes]);
 
   const requiredCount = filters.filter((f) => f.role === "required").length;
   const optionalCount = filters.filter((f) => f.role === "optional").length;
   const excludedCount = filters.filter((f) => f.role === "excluded").length;
+  const noFilters = filters.length === 0 && selectedTags.length === 0 && !titleQuery.trim();
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
@@ -2206,7 +2242,7 @@ function SearchView({
             <p className="text-xs text-[var(--muted-foreground)] mt-0.5">par ingrédients</p>
             <VersionBadge />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <span className="text-xs bg-[var(--muted)] text-[var(--muted-foreground)] px-2 py-1 rounded-full hidden sm:inline">
               {filteredRecipes.length} recette{filteredRecipes.length !== 1 ? "s" : ""}
             </span>
@@ -2226,6 +2262,7 @@ function SearchView({
               onDelete={onDeleteList}
               onSelectList={setSelectedListId}
             />
+            {canEdit && (
             <button
               onClick={onNewRecipe}
               className="bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-medium px-3 py-1.5 rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1.5"
@@ -2233,11 +2270,24 @@ function SearchView({
               <span className="text-sm leading-none">+</span>
               <span>Nouvelle recette</span>
             </button>
+            )}
+            <UserMenu />
           </div>
         </div>
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+        {/* Recherche par titre */}
+        <input
+          type="search"
+          value={titleQuery}
+          onChange={(event) => setTitleQuery(event.target.value)}
+          placeholder="Rechercher une recette par son titre…"
+          aria-label="Rechercher une recette par son titre"
+          autoComplete="off"
+          className="w-full bg-[var(--card)] border border-[var(--border)] rounded-2xl px-4 py-3 text-sm shadow-sm placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] transition"
+        />
+
         {/* Search panel */}
         <section className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-5 shadow-sm">
           <div>
@@ -2433,6 +2483,7 @@ function SearchView({
                   setFilters([]);
                   setSelectedTags([]);
                   setSelectedListId(null);
+                  setTitleQuery("");
                 }}
                 className="mt-2 text-sm text-[var(--primary)] hover:underline"
               >
@@ -2443,9 +2494,9 @@ function SearchView({
             <>
               <div className="flex items-baseline justify-between mb-4">
                 <h2 className="font-display text-xl">
-                  {filters.length === 0 && selectedTags.length === 0 && !selectedList
+                  {!selectedList && noFilters
                     ? "Toutes les recettes"
-                    : selectedList && filters.length === 0 && selectedTags.length === 0
+                    : selectedList && noFilters
                       ? selectedList.name
                       : "Résultats"}
                 </h2>
@@ -2501,6 +2552,7 @@ export default function App() {
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState("");
   const [syncTick, setSyncTick] = useState(0);
+  const { user, canEdit } = useAuth();
 
   // Dernier état connu du serveur : permet de n'envoyer que ce qui a changé.
   const synced = useRef({ recipes: new Map<number, string>(), lists: "[]" });
@@ -2544,7 +2596,7 @@ export default function App() {
   // Synchronisation automatique : chaque modification (création, édition, import,
   // suppression, listes…) est comparée au dernier état du serveur puis envoyée.
   useEffect(() => {
-    if (loadState !== "ready") return;
+    if (loadState !== "ready" || !user) return; // visiteur anonyme : lecture seule, rien à envoyer
     const known = synced.current;
 
     const currentIds = new Set(recipes.map((r) => r.id));
@@ -2597,7 +2649,7 @@ export default function App() {
         }
       });
     }
-  }, [recipes, preferenceLists, loadState, syncTick]);
+  }, [recipes, preferenceLists, loadState, syncTick, user]);
   const tagSuggestions = useMemo(
     () =>
       Array.from(
@@ -2738,7 +2790,7 @@ export default function App() {
     );
   }
 
-  if (view.name === "form") {
+  if (view.name === "form" && canEdit) {
     const fromDetail = view.recipe !== null;
     return (
       <RecipeForm

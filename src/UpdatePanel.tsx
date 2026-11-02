@@ -1,13 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  ApiError,
-  fetchUpdateStatus,
-  getUpdateToken,
-  loadInfo,
-  setUpdateToken,
-  startUpdate,
-  type UpdateStatus,
-} from "./api";
+import { ApiError, fetchUpdateStatus, loadInfo, startUpdate, type UpdateStatus } from "./api";
+import { useAuth } from "./auth";
 import { formatDateTime, useServerInfo } from "./VersionBadge";
 
 type Phase = "idle" | "running" | "restarting" | "done" | "error";
@@ -20,8 +13,9 @@ const STEP_ICONS: Record<UpdateStatus["steps"][number]["state"], string> = {
   error: "✕",
 };
 
-/** Section « Mise à jour » de la fenêtre « Gérer » : git pull, build et redémarrage du serveur. */
+/** Section « Mise à jour » de la fenêtre « Gérer » (administrateurs) : git pull, build et redémarrage du serveur. */
 export default function UpdatePanel() {
+  const { isAdmin } = useAuth();
   const info = useServerInfo();
   const [phase, setPhase] = useState<Phase>("idle");
   const [status, setStatus] = useState<UpdateStatus | null>(null);
@@ -29,9 +23,8 @@ export default function UpdatePanel() {
   const initialStart = useRef<string | null>(null);
 
   function fail(err: unknown) {
-    if (err instanceof ApiError && err.status === 401) {
-      setUpdateToken(null); // jeton refusé : il sera redemandé au prochain essai
-      setError("Jeton refusé. Réessayez avec le bon jeton.");
+    if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+      setError("Session expirée ou droits insuffisants : reconnectez-vous en administrateur.");
     } else {
       setError(err instanceof Error ? err.message : "Erreur inconnue.");
     }
@@ -40,12 +33,6 @@ export default function UpdatePanel() {
 
   async function begin() {
     setError("");
-    let token = getUpdateToken();
-    if (!token) {
-      token = window.prompt("Jeton de mise à jour (valeur de UPDATE_TOKEN sur le serveur) :")?.trim() ?? "";
-      if (!token) return;
-      setUpdateToken(token);
-    }
     try {
       initialStart.current = info?.startedAt ?? (await loadInfo()).startedAt;
       setStatus(await startUpdate());
@@ -80,7 +67,7 @@ export default function UpdatePanel() {
         }
       } catch (err) {
         if (stopped) return;
-        if (err instanceof ApiError && err.status === 401) fail(err);
+        if (err instanceof ApiError && (err.status === 401 || err.status === 403)) fail(err);
         // Serveur injoignable pendant la mise à jour : il est probablement en train de redémarrer.
         else if (phase === "running") setPhase("restarting");
       }
@@ -92,6 +79,8 @@ export default function UpdatePanel() {
       window.clearInterval(timer);
     };
   }, [phase]);
+
+  if (!isAdmin) return null;
 
   const busy = phase === "running" || phase === "restarting";
 
@@ -109,7 +98,7 @@ export default function UpdatePanel() {
 
       {info && !info.updateEnabled ? (
         <p className="rounded-xl bg-[var(--muted)] p-3 text-xs leading-relaxed text-[var(--muted-foreground)]">
-          La mise à jour depuis l'application n'est pas activée sur ce serveur (variable UPDATE_TOKEN absente).
+          La mise à jour depuis l'application n'est pas disponible sur ce serveur.
         </p>
       ) : (
         <>

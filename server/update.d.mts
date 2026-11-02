@@ -1,5 +1,3 @@
-import type { IncomingMessage } from 'node:http'
-
 export interface UpdateStep {
   id: string
   label: string
@@ -19,9 +17,8 @@ export interface UpdateStatus {
 
 export interface Updater {
   supervised: boolean
-  assertAuthorized(req: IncomingMessage): void
   getStatus(): UpdateStatus
   start(): UpdateStatus
 }
 
-export function createUpdater(options: { rootDir: string; token: string; supervised: boolean }): Updater
+export function createUpdater(options: { rootDir: string; supervised: boolean }): Updater

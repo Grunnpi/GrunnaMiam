@@ -1,13 +1,18 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
+import { AuthGate, AuthProvider } from './auth'
 import SyncStatus from './SyncStatus'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
-    <SyncStatus />
+    <AuthProvider>
+      <AuthGate>
+        <App />
+      </AuthGate>
+      <SyncStatus />
+    </AuthProvider>
   </React.StrictMode>,
 )
 
