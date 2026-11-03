@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { deleteRecipes, loadData, onRetry, saveLists, saveRecipe } from "./api";
 import { useAuth } from "./auth";
+import BookletView from "./BookletView";
 import UpdatePanel from "./UpdatePanel";
 import UserMenu from "./UserMenu";
 import VersionBadge from "./VersionBadge";
@@ -2152,6 +2153,7 @@ function SearchView({
   onExport,
   onImport,
   onDeleteAll,
+  onOpenBooklet,
 }: {
   recipes: Recipe[];
   preferenceLists: PreferenceList[];
@@ -2163,6 +2165,7 @@ function SearchView({
   onExport: () => Promise<void>;
   onImport: (file: File, mode: ImportMode) => Promise<{ recipeCount: number; listCount: number }>;
   onDeleteAll: () => void;
+  onOpenBooklet: () => void;
 }) {
   const [filters, setFilters] = useState<IngredientFilter[]>([]);
   const [inputValue, setInputValue] = useState("");
@@ -2307,6 +2310,14 @@ function SearchView({
               onDelete={onDeleteList}
               onSelectList={setSelectedListId}
             />
+            <button
+              type="button"
+              onClick={onOpenBooklet}
+              title="Imprimer un livret de recettes (petit cahier A5)"
+              className="text-xs border border-[var(--border)] text-[var(--muted-foreground)] px-3 py-1.5 rounded-lg hover:border-[var(--primary)] hover:text-[var(--primary)] transition-colors"
+            >
+              📖 Livret
+            </button>
             {canEdit && (
             <button
               onClick={onNewRecipe}
@@ -2588,7 +2599,8 @@ function SearchView({
 type AppView =
   | { name: "list" }
   | { name: "detail"; recipe: Recipe }
-  | { name: "form"; recipe: Recipe | null };  // null = new recipe
+  | { name: "form"; recipe: Recipe | null }  // null = new recipe
+  | { name: "booklet" };
 
 export default function App() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
@@ -2848,6 +2860,16 @@ export default function App() {
     );
   }
 
+  if (view.name === "booklet") {
+    return (
+      <BookletView
+        recipes={recipes}
+        preferenceLists={preferenceLists}
+        onClose={() => setView({ name: "list" })}
+      />
+    );
+  }
+
   if (view.name === "form" && canEdit) {
     const fromDetail = view.recipe !== null;
     return (
@@ -2889,6 +2911,7 @@ export default function App() {
       preferenceLists={preferenceLists}
       onOpenRecipe={(r) => setView({ name: "detail", recipe: r })}
       onNewRecipe={() => setView({ name: "form", recipe: null })}
+      onOpenBooklet={() => setView({ name: "booklet" })}
       onCreateList={createPreferenceList}
       onToggleListRecipe={toggleRecipeInList}
       onDeleteList={deletePreferenceList}

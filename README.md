@@ -12,15 +12,16 @@ Les données sont stockées **sur le serveur** (pas dans le navigateur) et parta
 
 1. [Fonctionnalités](#fonctionnalités)
 2. [Démarrage rapide (poste de dev)](#démarrage-rapide-poste-de-dev)
-3. [Comptes et droits](#comptes-et-droits)
-4. [Installation sur un Synology](#installation-sur-un-synology)
-5. [Mise à jour depuis l'application](#mise-à-jour-depuis-lapplication)
-6. [Configuration](#configuration)
-7. [Scripts et commandes](#scripts-et-commandes)
-8. [Données et sauvegarde](#données-et-sauvegarde)
-9. [API](#api)
-10. [Structure du projet](#structure-du-projet)
-11. [Dépannage](#dépannage)
+3. [Imprimer un livret](#imprimer-un-livret)
+4. [Comptes et droits](#comptes-et-droits)
+5. [Installation sur un Synology](#installation-sur-un-synology)
+6. [Mise à jour depuis l'application](#mise-à-jour-depuis-lapplication)
+7. [Configuration](#configuration)
+8. [Scripts et commandes](#scripts-et-commandes)
+9. [Données et sauvegarde](#données-et-sauvegarde)
+10. [API](#api)
+11. [Structure du projet](#structure-du-projet)
+12. [Dépannage](#dépannage)
 
 ## Fonctionnalités
 
@@ -28,6 +29,7 @@ Les données sont stockées **sur le serveur** (pas dans le navigateur) et parta
 |---|:-:|:-:|:-:|
 | Consulter, rechercher, filtrer, voir les listes | ✅ | ✅ | ✅ |
 | Exporter les recettes (ZIP) | ✅ | ✅ | ✅ |
+| Imprimer un livret de recettes | ✅ | ✅ | ✅ |
 | Créer / modifier / supprimer une recette | ❌ | ✅ | ✅ |
 | Importer un ZIP, tout supprimer | ❌ | ✅ | ✅ |
 | Créer, modifier, supprimer des listes | ❌ | ✅ | ✅ |
@@ -57,6 +59,33 @@ Tester comme en production :
 npm run build
 npm start          # http://localhost:3100
 ```
+
+## Imprimer un livret
+
+Le bouton **📖 Livret** (en haut de la liste) ouvre un écran qui met en page les recettes en petit cahier au format A5, prêt à imprimer. Il est accessible à tout le monde, sans compte.
+
+**Réglages disponibles**
+
+| Réglage | Effet |
+|---|---|
+| Mise en page | *Cahier* (A4 paysage, deux pages A5 par face, pages dans l'ordre d'imposition) ou *Pages A5 à la suite* |
+| Titre | Titre de la couverture |
+| Couverture, sommaire | Activables séparément ; le sommaire indique le numéro de page de chaque recette |
+| Photo principale, photos des étapes | Activables séparément (sans photos : moins de pages et moins d'encre) |
+| Ordre | Alphabétique ou ordre de l'application |
+| Recettes | Cases à cocher, filtre par titre, « Seulement une liste… » pour reprendre une liste de préférences |
+
+**Mise en page automatique** : chaque recette commence sur une nouvelle page ; ses blocs (en-tête, ingrédients, étapes) sont répartis sur autant de pages A5 que nécessaire, sans couper une étape en deux. En mode cahier, le nombre de pages est complété à un multiple de 4 avec des pages de **notes** lignées, et la dernière page est le dos. Un message prévient si une étape est trop longue pour tenir sur une page (elle serait coupée) : raccourcissez-la ou désactivez les photos.
+
+**Imprimer en cahier**
+
+1. Choisissez *Cahier*, vérifiez l'aperçu (chaque feuille est montrée en recto puis en verso), cliquez sur **Imprimer**.
+2. Dans la fenêtre d'impression du navigateur : papier **A4**, orientation **paysage**, marges **Aucune**, échelle **100 %**, option **Graphiques d'arrière-plan** cochée, recto verso en **retournant sur le bord court**.
+3. Empilez les feuilles dans l'ordre d'impression (la feuille 1 au-dessus), pliez l'ensemble en deux et agrafez au pli.
+
+Avec *Pages A5 à la suite*, chaque page est imprimée sur du A5 (ou enregistrée en PDF A5) dans l'ordre normal ; pour en faire un cahier, utilisez la fonction « livret » de l'imprimante ou du lecteur PDF.
+
+> Astuce : « Enregistrer en PDF » dans la fenêtre d'impression donne un fichier à imprimer plus tard ou chez un imprimeur. Faites un premier essai avec 2 ou 3 recettes pour vérifier le sens du recto verso sur votre imprimante.
 
 ## Comptes et droits
 
@@ -235,6 +264,8 @@ src/
   UpdatePanel.tsx    Mise à jour depuis l'application
   VersionBadge.tsx   Version et heure de démarrage dans le header
   SyncStatus.tsx     Bandeau « Enregistrement… » / erreurs de sauvegarde
+  BookletView.tsx    Livret imprimable : pagination A5, couverture, sommaire, imposition cahier
+  booklet.css        Styles des pages du livret et de l'impression
 server/
   index.mjs          Serveur de production (site + API)
   api.mjs            Routes de l'API, stockage des recettes et des images
