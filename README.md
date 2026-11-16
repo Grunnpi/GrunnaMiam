@@ -12,16 +12,17 @@ Les données sont stockées **sur le serveur** (pas dans le navigateur) et parta
 
 1. [Fonctionnalités](#fonctionnalités)
 2. [Démarrage rapide (poste de dev)](#démarrage-rapide-poste-de-dev)
-3. [Imprimer un livret](#imprimer-un-livret)
-4. [Comptes et droits](#comptes-et-droits)
-5. [Installation sur un Synology](#installation-sur-un-synology)
-6. [Mise à jour depuis l'application](#mise-à-jour-depuis-lapplication)
-7. [Configuration](#configuration)
-8. [Scripts et commandes](#scripts-et-commandes)
-9. [Données et sauvegarde](#données-et-sauvegarde)
-10. [API](#api)
-11. [Structure du projet](#structure-du-projet)
-12. [Dépannage](#dépannage)
+3. [Créer une recette depuis un texte](#créer-une-recette-depuis-un-texte)
+4. [Imprimer un livret](#imprimer-un-livret)
+5. [Comptes et droits](#comptes-et-droits)
+6. [Installation sur un Synology](#installation-sur-un-synology)
+7. [Mise à jour depuis l'application](#mise-à-jour-depuis-lapplication)
+8. [Configuration](#configuration)
+9. [Scripts et commandes](#scripts-et-commandes)
+10. [Données et sauvegarde](#données-et-sauvegarde)
+11. [API](#api)
+12. [Structure du projet](#structure-du-projet)
+13. [Dépannage](#dépannage)
 
 ## Fonctionnalités
 
@@ -30,6 +31,7 @@ Les données sont stockées **sur le serveur** (pas dans le navigateur) et parta
 | Consulter, rechercher, filtrer, voir les listes | ✅ | ✅ | ✅ |
 | Exporter les recettes (ZIP) | ✅ | ✅ | ✅ |
 | Imprimer un livret de recettes | ✅ | ✅ | ✅ |
+| Créer une recette depuis un texte (OCR) | ❌ | ✅ | ✅ |
 | Créer / modifier / supprimer une recette | ❌ | ✅ | ✅ |
 | Importer un ZIP, tout supprimer | ❌ | ✅ | ✅ |
 | Créer, modifier, supprimer des listes | ❌ | ✅ | ✅ |
@@ -59,6 +61,36 @@ Tester comme en production :
 npm run build
 npm start          # http://localhost:3100
 ```
+
+## Créer une recette depuis un texte
+
+Le bouton **📝 Depuis un texte** (en haut de la liste, pour les comptes connectés) crée une recette à partir d'un texte copié, typiquement celui du **« Texte en direct » de l'iPhone** :
+
+1. Sur l'iPhone, ouvrez l'appareil photo, visez la recette, touchez le bouton « Texte en direct », puis *Tout sélectionner* → *Copier* (marche aussi sur une photo ou une capture d'écran, dans l'app Photos).
+2. Dans l'application, ouvrez **Depuis un texte**, collez le texte, touchez **Analyser le texte**.
+3. Vérifiez l'écran de résultat, corrigez ce qui doit l'être, touchez **Créer la recette**. Une photo peut être ajoutée ensuite avec *Modifier* (en attendant, la recette porte une vignette neutre, qui n'est pas imprimée dans les livrets).
+
+**Ce qui est reconnu**
+
+| Élément | Comment |
+|---|---|
+| Nettoyage | Caractères invisibles de l'OCR, puces, signes parasites ; fractions (½, ¼…) conservées |
+| Titre | Première ligne si elle ressemble à un titre (courte, sans point final, pas un ordre de cuisine). Sinon le champ reste vide et il faut le saisir |
+| Personnes, temps, difficulté | Lignes du type « Pour 4 personnes », « Préparation : 15 min », « Cuisson : 20 min », « Difficulté : facile ». Sans indication de temps, il est estimé en additionnant les durées citées dans les étapes |
+| Ingrédients | Titre « Ingrédients » s'il existe ; sinon, le bloc de lignes qui commence par une quantité (« 350 g de potimarron », « 2 c. à soupe d'huile », « ½ sachet de levure », « Le zeste de ½ citron ») et les lignes courtes qui suivent (« Fleur de sel »). Les ingrédients sans quantité reçoivent « au goût » |
+| Étapes | Un paragraphe = une étape ; les lignes coupées par l'OCR sont recollées ; les numéros (« 1. », « Étape 2 ») sont retirés. Le titre court de chaque étape est le début de sa première phrase |
+
+**Rapprochement avec vos ingrédients existants**
+
+Chaque ingrédient est comparé à la liste d'ingrédients déjà utilisés dans vos recettes (casse, accents et pluriels ignorés ; « bio », « frais », « du moulin »… ne comptent pas) :
+
+- **✓ Dans votre liste** : l'ingrédient existe déjà ; son nom est repris tel que vous l'utilisez (« poivre du moulin » devient « poivre » si « poivre » existe).
+- **Proche de « sel » — Utiliser** : un ingrédient voisin existe (« fleur de sel » → « sel », « zeste de citron » → « citron », faute de frappe « ricota » → « ricotta »). Le nom n'est remplacé que si vous cliquez sur **Utiliser**.
+- **Nouvel ingrédient** : rien de proche n'existe ; le nom est gardé tel quel.
+
+Tout reste modifiable : quantités, noms (avec suggestions de votre liste), ajout, suppression, et pour les étapes le titre, le texte et l'ordre.
+
+L'analyse se fait dans le navigateur, sans envoyer le texte à un service externe. C'est une aide à la saisie : le résultat est à relire, surtout avec un OCR de mauvaise qualité.
 
 ## Imprimer un livret
 
@@ -266,6 +298,8 @@ src/
   SyncStatus.tsx     Bandeau « Enregistrement… » / erreurs de sauvegarde
   BookletView.tsx    Livret imprimable : pagination A5, couverture, sommaire, imposition cahier
   booklet.css        Styles des pages du livret et de l'impression
+  TextImportView.tsx Création d'une recette depuis un texte : saisie puis vérification
+  recipeText.ts      Analyse du texte (OCR) : titre, ingrédients, étapes, rapprochement des ingrédients
 server/
   index.mjs          Serveur de production (site + API)
   api.mjs            Routes de l'API, stockage des recettes et des images

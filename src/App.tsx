@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { deleteRecipes, loadData, onRetry, saveLists, saveRecipe } from "./api";
 import { useAuth } from "./auth";
 import BookletView from "./BookletView";
+import TextImportView from "./TextImportView";
 import UpdatePanel from "./UpdatePanel";
 import UserMenu from "./UserMenu";
 import VersionBadge from "./VersionBadge";
@@ -2154,6 +2155,7 @@ function SearchView({
   onImport,
   onDeleteAll,
   onOpenBooklet,
+  onImportText,
 }: {
   recipes: Recipe[];
   preferenceLists: PreferenceList[];
@@ -2166,6 +2168,7 @@ function SearchView({
   onImport: (file: File, mode: ImportMode) => Promise<{ recipeCount: number; listCount: number }>;
   onDeleteAll: () => void;
   onOpenBooklet: () => void;
+  onImportText: () => void;
 }) {
   const [filters, setFilters] = useState<IngredientFilter[]>([]);
   const [inputValue, setInputValue] = useState("");
@@ -2325,6 +2328,16 @@ function SearchView({
             >
               <span className="text-sm leading-none">+</span>
               <span>Nouvelle recette</span>
+            </button>
+            )}
+            {canEdit && (
+            <button
+              type="button"
+              onClick={onImportText}
+              title="Créer une recette à partir d'un texte copié (OCR, iPhone…)"
+              className="text-xs border border-[var(--border)] text-[var(--muted-foreground)] px-3 py-1.5 rounded-lg hover:border-[var(--primary)] hover:text-[var(--primary)] transition-colors"
+            >
+              📝 Depuis un texte
             </button>
             )}
             <UserMenu />
@@ -2600,7 +2613,8 @@ type AppView =
   | { name: "list" }
   | { name: "detail"; recipe: Recipe }
   | { name: "form"; recipe: Recipe | null }  // null = new recipe
-  | { name: "booklet" };
+  | { name: "booklet" }
+  | { name: "textImport" };
 
 export default function App() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
@@ -2789,6 +2803,13 @@ export default function App() {
     setView({ name: "list" });
   }
 
+  function createRecipeFromText(draft: Omit<Recipe, "id">) {
+    if (!canEdit) return;
+    const recipe: Recipe = { ...draft, id: Math.max(Date.now(), ...recipes.map((r) => r.id)) + 1 };
+    setRecipes((current) => [...current, recipe]);
+    setView({ name: "detail", recipe });
+  }
+
   async function handleImport(file: File, mode: ImportMode) {
     const imported = await importRecipesArchive(file);
 
@@ -2860,6 +2881,17 @@ export default function App() {
     );
   }
 
+  if (view.name === "textImport" && canEdit) {
+    return (
+      <TextImportView
+        knownIngredients={ingredientSuggestions}
+        knownTags={tagSuggestions}
+        onCancel={() => setView({ name: "list" })}
+        onCreate={createRecipeFromText}
+      />
+    );
+  }
+
   if (view.name === "booklet") {
     return (
       <BookletView
@@ -2912,6 +2944,7 @@ export default function App() {
       onOpenRecipe={(r) => setView({ name: "detail", recipe: r })}
       onNewRecipe={() => setView({ name: "form", recipe: null })}
       onOpenBooklet={() => setView({ name: "booklet" })}
+      onImportText={() => setView({ name: "textImport" })}
       onCreateList={createPreferenceList}
       onToggleListRecipe={toggleRecipeInList}
       onDeleteList={deletePreferenceList}

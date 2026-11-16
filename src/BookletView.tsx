@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PreferenceList, Recipe } from "./App";
+import { hasRealPhoto } from "./recipeText";
 import "./booklet.css";
 
 // ── Constantes de mise en page ──────────────────────────────────────────────
@@ -70,7 +71,7 @@ function buildBlocks(recipe: Recipe, options: Pick<Options, "mainPhoto" | "stepP
             <span key={item}>{item}</span>
           ))}
         </p>
-        {options.mainPhoto && recipe.image && <img className="bk-photo" src={recipe.image} alt="" />}
+        {options.mainPhoto && hasRealPhoto(recipe.image) && <img className="bk-photo" src={recipe.image} alt="" />}
         {recipe.description && <p className="bk-desc">{recipe.description}</p>}
       </div>
     ),
@@ -408,7 +409,7 @@ export default function BookletView({
       coverImages: options.mainPhoto
         ? selectedRecipes
             .map((recipe) => recipe.image)
-            .filter(Boolean)
+            .filter(hasRealPhoto)
             .slice(0, 3)
         : [],
       dateLabel: new Date().toLocaleDateString("fr-FR", { month: "long", year: "numeric" }),
