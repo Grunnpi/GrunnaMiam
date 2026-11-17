@@ -105,6 +105,22 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+// Erreurs d'écoute fréquentes : message clair plutôt qu'une trace d'exception.
+server.on("error", (error) => {
+  if (error.code === "EACCES" || error.code === "EADDRINUSE") {
+    console.error(`[${new Date().toISOString()}] Impossible d'écouter sur ${HOST}:${PORT} (${error.code}).`);
+    console.error(
+      error.code === "EADDRINUSE"
+        ? "  Ce port est déjà utilisé par un autre programme (ou une autre instance du serveur)."
+        : "  Accès refusé à ce port. Sous Windows, il est souvent réservé par le système (Hyper-V, WSL, Docker) : " +
+            "vérifiez avec « netsh interface ipv4 show excludedportrange protocol=tcp »."
+    );
+    console.error("  Choisissez un autre port avec la variable PORT (ex. PORT=3200, ou « export PORT=3200 » dans deploy/config.sh).");
+    process.exit(1);
+  }
+  throw error;
+});
+
 server.listen(PORT, HOST, () => {
   console.log(`[${new Date().toISOString()}] GrunnaMiam démarré sur http://${HOST}:${PORT}`);
   console.log(`  site    : ${DIST_DIR}`);
