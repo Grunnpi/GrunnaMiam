@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import type { Recipe } from "./App";
+import { GEMINI_PROMPT, copyText } from "./geminiPrompt";
 import {
   PLACEHOLDER_IMAGE,
   buildIngredientIndex,
@@ -77,6 +78,7 @@ export default function TextImportView({
   const [phase, setPhase] = useState<"input" | "review">("input");
   const [raw, setRaw] = useState("");
   const [pasteError, setPasteError] = useState("");
+  const [promptCopy, setPromptCopy] = useState<"idle" | "copied" | "error">("idle");
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -104,6 +106,12 @@ export default function TextImportView({
     setSteps(parsed.steps.map((step) => ({ id: nextId.current++, ...step })));
     setPhase("review");
     window.scrollTo({ top: 0 });
+  }
+
+  async function copyPrompt() {
+    const ok = await copyText(GEMINI_PROMPT);
+    setPromptCopy(ok ? "copied" : "error");
+    window.setTimeout(() => setPromptCopy("idle"), 3500);
   }
 
   async function pasteFromClipboard() {
@@ -147,6 +155,15 @@ export default function TextImportView({
     (item) => matchIngredient(item.name, index)?.known.trim().toLowerCase() === splitNote(item.name).main.toLowerCase()
   ).length;
   const canCreate = title.trim() !== "" && validIngredients.length > 0 && validSteps.length > 0;
+
+  // Gemini signale par [?] les mots ou nombres dont il n'est pas sûr : on les met en évidence.
+  const doubtCount = [
+    title,
+    description,
+    ...ingredients.flatMap((item) => [item.quantity, item.name]),
+    ...steps.flatMap((item) => [item.title, item.instruction]),
+  ].filter((value) => value.includes("[?]")).length;
+  const doubt = (value: string) => (value.includes("[?]") ? " !border-[var(--accent)] !bg-[var(--accent)]/10" : "");
 
   function create() {
     if (!canCreate) return;
@@ -221,6 +238,46 @@ export default function TextImportView({
               {pasteError && <p className="text-xs text-[var(--accent)]">{pasteError}</p>}
             </Section>
 
+            <Section
+              title="Texte abîmé ? Normalisez-le avec Gemini"
+              hint="Gemini corrige les erreurs d'OCR et met la recette au format idéal pour cette application, en gardant les phrases d'origine."
+            >
+              <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-[var(--muted-foreground)]">
+                <li>Copiez le prompt ci-dessous.</li>
+                <li>Collez-le dans Gemini, puis ajoutez le texte de la recette (ou joignez une photo).</li>
+                <li>Copiez la réponse de Gemini et collez-la dans la zone de texte ci-dessus.</li>
+              </ol>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={copyPrompt}
+                  className="rounded-lg bg-[var(--primary)] px-3 py-1.5 text-xs font-medium text-[var(--primary-foreground)] transition-opacity hover:opacity-90"
+                >
+                  {promptCopy === "copied" ? "✓ Prompt copié" : "Copier le prompt"}
+                </button>
+                <a
+                  href="https://gemini.google.com/app"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-[var(--primary)] hover:underline"
+                >
+                  Ouvrir Gemini ↗
+                </a>
+              </div>
+              {promptCopy === "error" && (
+                <p className="text-xs text-[var(--accent)]">Copie impossible : ouvrez « Voir le prompt » ci-dessous et copiez-le à la main.</p>
+              )}
+              <details className="text-xs">
+                <summary className="cursor-pointer text-[var(--muted-foreground)] hover:text-[var(--foreground)]">Voir le prompt</summary>
+                <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-[var(--muted)] p-3 text-[11px] leading-snug">
+                  {GEMINI_PROMPT}
+                </pre>
+              </details>
+              <p className="text-[11px] leading-relaxed text-[var(--muted-foreground)]">
+                Gemini est un service externe : le texte ou la photo que vous lui donnez lui est transmis.
+              </p>
+            </Section>
+
             <div className="space-y-1 rounded-2xl bg-[var(--muted)] p-4 text-xs leading-relaxed text-[var(--muted-foreground)]">
               <p className="font-medium text-[var(--foreground)]">Sur iPhone</p>
               <p>
@@ -241,6 +298,12 @@ export default function TextImportView({
               </button>
             </div>
 
+            {doubtCount > 0 && (
+              <p className="rounded-2xl border border-[var(--accent)]/30 bg-[var(--accent)]/10 px-4 py-3 text-sm text-[var(--accent)]">
+                {doubtCount} passage{doubtCount > 1 ? "s" : ""} marqué{doubtCount > 1 ? "s" : ""} [?] par Gemini : vérifiez-{doubtCount > 1 ? "les" : "le"} et supprimez le « [?] » (champs en rouge).
+              </p>
+            )}
+
             <Section title="Informations">
               <div className="space-y-1">
                 <input
@@ -249,7 +312,7 @@ export default function TextImportView({
                   onChange={(event) => setTitle(event.target.value)}
                   placeholder="Titre de la recette"
                   aria-label="Titre de la recette"
-                  className={`${fieldCls} ${title.trim() ? "" : "border-[var(--accent)]"}`}
+                  className={`${fieldCls} ${title.trim() ? "" : "border-[var(--accent)]"}${doubt(title)}`}
                 />
                 {!title.trim() && <p className="text-xs text-[var(--accent)]">Aucun titre trouvé dans le texte : saisissez-le.</p>}
               </div>
@@ -323,7 +386,7 @@ export default function TextImportView({
                         onChange={(event) => updateIngredient(item.id, { quantity: event.target.value })}
                         placeholder="Quantité"
                         aria-label="Quantité"
-                        className={`${fieldCls} !w-28 shrink-0`}
+                        className={`${fieldCls} !w-28 shrink-0${doubt(item.quantity)}`}
                       />
                       <input
                         type="text"
@@ -332,7 +395,7 @@ export default function TextImportView({
                         list="text-import-ingredients"
                         placeholder="Ingrédient"
                         aria-label="Ingrédient"
-                        className={`${fieldCls} min-w-0 flex-1`}
+                        className={`${fieldCls} min-w-0 flex-1${doubt(item.name)}`}
                       />
                       <button
                         type="button"
@@ -377,7 +440,7 @@ export default function TextImportView({
                         onChange={(event) => updateStep(step.id, { title: event.target.value })}
                         placeholder="Titre de l'étape"
                         aria-label="Titre de l'étape"
-                        className={`${fieldCls} min-w-0 flex-1`}
+                        className={`${fieldCls} min-w-0 flex-1${doubt(step.title)}`}
                       />
                       <button type="button" onClick={() => moveStep(position, -1)} disabled={position === 0} aria-label="Monter" className={iconBtn}>
                         ↑
@@ -405,7 +468,7 @@ export default function TextImportView({
                       onChange={(event) => updateStep(step.id, { instruction: event.target.value })}
                       rows={Math.min(10, Math.max(3, Math.ceil(step.instruction.length / 55)))}
                       aria-label="Texte de l'étape"
-                      className={fieldCls}
+                      className={`${fieldCls}${doubt(step.instruction)}`}
                     />
                   </li>
                 ))}

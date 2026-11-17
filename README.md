@@ -90,6 +90,18 @@ Chaque ingrédient est comparé à la liste d'ingrédients déjà utilisés dans
 
 Tout reste modifiable : quantités, noms (avec suggestions de votre liste), ajout, suppression, et pour les étapes le titre, le texte et l'ordre.
 
+**Normaliser le texte avec Gemini (facultatif)**
+
+Quand l'OCR est de mauvaise qualité (erreurs de lettres, lignes coupées, symboles parasites), l'écran de saisie propose un **prompt prêt à l'emploi** pour Gemini (ou une autre IA) :
+
+1. Touchez **Copier le prompt** (ou ouvrez **Voir le prompt** pour le lire ; **Ouvrir Gemini** ouvre le site).
+2. Collez-le dans Gemini, puis ajoutez le texte de la recette, ou joignez directement la photo.
+3. Copiez la réponse de Gemini et collez-la dans la zone de texte, puis **Analyser le texte**.
+
+Le prompt demande à Gemini de ne **pas réécrire** : il garde les phrases d'origine, corrige seulement les erreurs d'OCR évidentes et met la recette au format que l'analyseur reconnaît le mieux (titre, `Pour N personnes`, `Préparation : …`, `Ingrédients`, `Préparation`, une étape par ligne). Quand Gemini n'est pas sûr d'un mot ou d'un nombre, il ajoute **`[?]`** : l'écran de vérification met ces champs en rouge et affiche un avertissement tant qu'il en reste. Le texte du prompt est dans `src/geminiPrompt.ts` : modifiez-le là si vous voulez changer les consignes.
+
+> Gemini est un service externe : le texte ou la photo que vous lui donnez lui est transmis. Sans le prompt, l'analyse reste entièrement locale.
+
 L'analyse se fait dans le navigateur, sans envoyer le texte à un service externe. C'est une aide à la saisie : le résultat est à relire, surtout avec un OCR de mauvaise qualité.
 
 ## Imprimer un livret
@@ -300,6 +312,7 @@ src/
   booklet.css        Styles des pages du livret et de l'impression
   TextImportView.tsx Création d'une recette depuis un texte : saisie puis vérification
   recipeText.ts      Analyse du texte (OCR) : titre, ingrédients, étapes, rapprochement des ingrédients
+  geminiPrompt.ts    Prompt de normalisation pour Gemini + fonction de copie dans le presse-papiers
 server/
   index.mjs          Serveur de production (site + API)
   api.mjs            Routes de l'API, stockage des recettes et des images
