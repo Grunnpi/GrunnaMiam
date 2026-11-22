@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import * as api from "./api";
 import { authInputCls, useAuth } from "./auth";
+import { formatDateTime } from "./VersionBadge";
 
 const errorMessage = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
 
@@ -146,7 +147,9 @@ function Account({ onLoggedOut }: { onLoggedOut: () => void }) {
       </div>
 
       <PasswordForm />
+      <SessionsPanel />
       {isAdmin && <UsersAdmin currentUserId={user.id} />}
+      {isAdmin && <AuditLog />}
     </>
   );
 }
@@ -194,7 +197,7 @@ function PasswordForm() {
         type="password"
         value={next}
         onChange={(event) => setNext(event.target.value)}
-        placeholder="Nouveau mot de passe (8 caractères minimum)"
+        placeholder="Nouveau mot de passe (12 caractères minimum)"
         autoComplete="new-password"
         className={authInputCls}
       />
@@ -206,6 +209,9 @@ function PasswordForm() {
         autoComplete="new-password"
         className={authInputCls}
       />
+      <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
+        12 caractères minimum, sans mot de passe courant ni nom d'utilisateur. Une phrase de plusieurs mots est plus sûre et plus facile à retenir.
+      </p>
       {message && <Notice type={message.type}>{message.text}</Notice>}
       <button
         type="submit"
@@ -265,8 +271,14 @@ function UsersAdmin({ currentUserId }: { currentUserId: number }) {
   }
 
   function resetPassword(user: api.ManagedUser) {
-    const value = window.prompt(`Nouveau mot de passe pour « ${user.username} » (8 caractères minimum) :`);
+    const value = window.prompt(`Nouveau mot de passe pour « ${user.username} » (12 caractères minimum) :`);
     if (value) void run(() => api.resetUserPassword(user.id, value), `Mot de passe de « ${user.username} » modifié.`);
+  }
+
+  function disconnect(user: api.ManagedUser) {
+    if (window.confirm(`Déconnecter tous les appareils de « ${user.username} » ?`)) {
+      void run(() => api.revokeUserSessions(user.id), `Appareils de « ${user.username} » déconnectés.`);
+    }
   }
 
   function removeUser(user: api.ManagedUser) {
@@ -289,7 +301,10 @@ function UsersAdmin({ currentUserId }: { currentUserId: number }) {
                   {user.username}
                   {user.id === currentUserId && <span className="ml-2 text-xs font-normal text-[var(--muted-foreground)]">(vous)</span>}
                 </p>
-                <p className="text-xs text-[var(--muted-foreground)]">{user.role === "admin" ? "Administrateur" : "Utilisateur"}</p>
+                <p className="text-xs text-[var(--muted-foreground)]">
+                  {user.role === "admin" ? "Administrateur" : "Utilisateur"} ·{" "}
+                  {user.lastLoginAt ? `connecté le ${formatDateTime(user.lastLoginAt)}` : "jamais connecté"}
+                </p>
               </div>
               <button
                 type="button"
@@ -300,6 +315,16 @@ function UsersAdmin({ currentUserId }: { currentUserId: number }) {
                 Mot de passe
               </button>
               {user.id !== currentUserId && (
+                <>
+                <button
+                  type="button"
+                  onClick={() => disconnect(user)}
+                  disabled={busy}
+                  title="Ferme toutes les sessions ouvertes de ce compte"
+                  className="text-xs text-[var(--muted-foreground)] hover:underline disabled:opacity-40"
+                >
+                  Déconnecter
+                </button>
                 <button
                   type="button"
                   onClick={() => removeUser(user)}
@@ -308,6 +333,7 @@ function UsersAdmin({ currentUserId }: { currentUserId: number }) {
                 >
                   Supprimer
                 </button>
+                </>
               )}
             </li>
           ))}
@@ -328,7 +354,7 @@ function UsersAdmin({ currentUserId }: { currentUserId: number }) {
           type="password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          placeholder="Mot de passe (8 caractères minimum)"
+          placeholder="Mot de passe (12 caractères minimum)"
           autoComplete="new-password"
           className={authInputCls}
         />
@@ -348,6 +374,207 @@ function UsersAdmin({ currentUserId }: { currentUserId: number }) {
           Créer le compte
         </button>
       </form>
+    </section>
+  );
+}
+
+// ── Appareils connectés ──
+function SessionsPanel() {
+  const [sessions, setSessions] = useState<api.SessionInfo[] | null>(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function refresh() {
+    try {
+      setSessions(await api.listSessions());
+    } catch (err) {
+      setMessage({ type: "error", text: errorMessage(err, "Impossible de charger les appareils.") });
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function run(action: () => Promise<unknown>, success: string) {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await action();
+      setMessage({ type: "success", text: success });
+      await refresh();
+    } catch (err) {
+      setMessage({ type: "error", text: errorMessage(err, "Action impossible.") });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const others = sessions?.filter((session) => !session.current).length ?? 0;
+
+  return (
+    <section className="space-y-3 border-t border-[var(--border)] pt-5">
+      <div>
+        <h3 className="font-display text-base">Mes appareils connectés</h3>
+        <p className="mt-0.5 text-xs leading-relaxed text-[var(--muted-foreground)]">
+          Une session se ferme toute seule après une longue période sans activité, ou à sa date de fin. Si vous ne reconnaissez pas un appareil,
+          déconnectez-le puis changez votre mot de passe.
+        </p>
+      </div>
+
+      {message && <Notice type={message.type}>{message.text}</Notice>}
+
+      {sessions && (
+        <ul className="divide-y divide-[var(--border)] overflow-hidden rounded-xl border border-[var(--border)]">
+          {sessions.map((session) => (
+            <li key={session.id} className="flex items-center gap-3 px-4 py-2.5">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">
+                  {session.device}
+                  {session.current && (
+                    <span className="ml-2 rounded-full bg-[var(--primary)]/10 px-2 py-0.5 text-[10px] font-medium text-[var(--primary)]">
+                      Cet appareil
+                    </span>
+                  )}
+                </p>
+                <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
+                  {session.ip} · dernière activité {formatDateTime(session.lastSeenAt)}
+                  <br />
+                  connecté le {formatDateTime(session.createdAt)} · valide jusqu'au {formatDateTime(session.expiresAt)}
+                </p>
+              </div>
+              {!session.current && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void run(() => api.revokeSession(session.id), `Appareil « ${session.device} » déconnecté.`)}
+                  className="shrink-0 text-xs text-[var(--accent)] hover:underline disabled:opacity-40"
+                >
+                  Déconnecter
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <button
+        type="button"
+        disabled={busy || others === 0}
+        onClick={() => {
+          if (window.confirm("Déconnecter tous les autres appareils ?")) {
+            void run(() => api.revokeOtherSessions(), "Les autres appareils ont été déconnectés.");
+          }
+        }}
+        className="w-full rounded-xl border border-[var(--border)] px-4 py-2.5 text-sm hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-40 transition-colors"
+      >
+        Déconnecter tous les autres appareils
+      </button>
+    </section>
+  );
+}
+
+// ── Journal des connexions (administrateurs) ──
+const EVENT_LABELS: Record<string, string> = {
+  login_success: "Connexion",
+  login_failed: "Échec de connexion",
+  login_blocked: "Connexion bloquée (trop d'essais)",
+  logout: "Déconnexion",
+  setup: "Création du premier administrateur",
+  password_changed: "Mot de passe modifié",
+  password_reset: "Mot de passe réinitialisé",
+  user_created: "Compte créé",
+  user_deleted: "Compte supprimé",
+  session_revoked: "Appareil déconnecté",
+  sessions_revoked: "Appareils déconnectés",
+  recipes_deleted: "Recettes supprimées",
+  update_started: "Mise à jour lancée",
+};
+
+const FAILURE_EVENTS = new Set(["login_failed", "login_blocked"]);
+
+function AuditLog() {
+  const [open, setOpen] = useState(false);
+  const [entries, setEntries] = useState<api.AuditEntry[] | null>(null);
+  const [failuresOnly, setFailuresOnly] = useState(false);
+  const [error, setError] = useState("");
+
+  async function load() {
+    setError("");
+    try {
+      setEntries(await api.fetchAuditLog(200));
+    } catch (err) {
+      setError(errorMessage(err, "Impossible de charger le journal."));
+    }
+  }
+
+  useEffect(() => {
+    if (open && entries === null) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const shown = entries ? (failuresOnly ? entries.filter((entry) => FAILURE_EVENTS.has(entry.event)) : entries) : [];
+
+  return (
+    <section className="space-y-3 border-t border-[var(--border)] pt-5">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
+        <h3 className="font-display text-base">Journal de connexions</h3>
+        <span className={`text-xs text-[var(--muted-foreground)] transition-transform ${open ? "rotate-180" : ""}`}>▼</span>
+      </button>
+
+      {open && (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="flex cursor-pointer items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={failuresOnly}
+                onChange={(event) => setFailuresOnly(event.target.checked)}
+                className="h-4 w-4 accent-[var(--primary)]"
+              />
+              Échecs seulement
+            </label>
+            <button type="button" onClick={() => void load()} className="text-xs text-[var(--primary)] hover:underline">
+              Actualiser
+            </button>
+          </div>
+
+          {error && <Notice type="error">{error}</Notice>}
+          {entries && shown.length === 0 && !error && (
+            <p className="text-xs text-[var(--muted-foreground)]">Aucun événement.</p>
+          )}
+
+          <ul className="max-h-80 divide-y divide-[var(--border)] overflow-y-auto rounded-xl border border-[var(--border)]">
+            {shown.map((entry, index) => (
+              <li key={`${entry.t}-${index}`} className="px-4 py-2">
+                <p
+                  className={`text-sm font-medium ${
+                    FAILURE_EVENTS.has(entry.event) ? "text-[var(--accent)]" : entry.event === "login_success" ? "text-[var(--primary)]" : ""
+                  }`}
+                >
+                  {EVENT_LABELS[entry.event] ?? entry.event}
+                  <span className="font-normal text-[var(--foreground)]">
+                    {entry.user ? ` · ${entry.user}` : ""}
+                    {entry.target ? ` → ${entry.target}` : ""}
+                  </span>
+                </p>
+                <p className="text-xs leading-relaxed text-[var(--muted-foreground)]">
+                  {formatDateTime(entry.t)} · {entry.ip} · {entry.device}
+                  {entry.detail ? ` · ${entry.detail}` : ""}
+                </p>
+              </li>
+            ))}
+          </ul>
+          <p className="text-[11px] leading-relaxed text-[var(--muted-foreground)]">
+            Pour un échec de connexion, le nom affiché est celui qui a été saisi (il peut ne pas exister).
+          </p>
+        </>
+      )}
     </section>
   );
 }

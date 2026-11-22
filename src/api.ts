@@ -139,6 +139,8 @@ export interface AuthState {
 
 export interface ManagedUser extends AuthUser {
   createdAt: string;
+  /** Dernière connexion réussie (null si jamais connecté). */
+  lastLoginAt: string | null;
 }
 
 export const fetchMe = () => request<AuthState>("/auth/me", { cache: "no-store" }, false);
@@ -163,6 +165,43 @@ export const deleteUser = (id: number) => request<{ ok: true }>(`/users/${id}`, 
 
 export const resetUserPassword = (id: number, password: string) =>
   request<{ ok: true }>(`/users/${id}/password`, post({ password }), false);
+
+export const revokeUserSessions = (id: number) =>
+  request<{ revoked: number }>(`/users/${id}/revoke-sessions`, post(), false);
+
+// ── Appareils connectés (sessions du compte courant) ──
+export interface SessionInfo {
+  id: string;
+  device: string;
+  ip: string;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  /** true pour l'appareil qui fait la demande. */
+  current: boolean;
+}
+
+export const listSessions = () => request<SessionInfo[]>("/auth/sessions", { cache: "no-store" }, false);
+
+export const revokeSession = (id: string) =>
+  request<{ ok: true; current: boolean }>(`/auth/sessions/${id}`, { method: "DELETE" }, false);
+
+export const revokeOtherSessions = () => request<{ revoked: number }>("/auth/sessions/revoke-others", post(), false);
+
+// ── Journal des connexions (administrateurs) ──
+export interface AuditEntry {
+  t: string;
+  event: string;
+  /** Nom du compte connecté (ou nom saisi lors d'un échec de connexion). */
+  user?: string | null;
+  target?: string | null;
+  detail?: string | null;
+  ip: string;
+  device: string;
+}
+
+export const fetchAuditLog = (limit = 200) =>
+  request<AuditEntry[]>(`/auth/log?limit=${limit}`, { cache: "no-store" }, false);
 
 // ── Informations serveur & mise à jour (administrateurs) ──────────────────
 export interface ServerInfo {

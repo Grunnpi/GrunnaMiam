@@ -138,7 +138,7 @@ function SetupScreen() {
           type="password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          placeholder="Mot de passe (8 caractères minimum)"
+          placeholder="Mot de passe (12 caractères minimum)"
           autoComplete="new-password"
           className={authInputCls}
         />
