@@ -1,12 +1,13 @@
-// Comptes utilisateurs et sessions, sans dépendance npm.
+// Comptes utilisateurs, sessions et journal de connexions, sans dépendance npm.
 //
 // Stockage (dans le dossier de données) :
-//   users.json   comptes : mot de passe haché avec scrypt (sel aléatoire par compte)
-//   session.key  clé secrète servant à signer les cookies de session (créée au premier usage)
+//   users.json       comptes : mot de passe haché avec scrypt (sel aléatoire par compte)
+//   sessions.json    sessions ouvertes (on ne stocke que l'empreinte SHA-256 du jeton du cookie)
+//   auth-log.jsonl   journal des connexions et des actions sensibles (une ligne JSON par événement)
 //
-// Session : cookie HttpOnly signé (HMAC-SHA256), valable 30 jours. Elle ne dépend d'aucun état
-// en mémoire : elle survit donc aux redémarrages du serveur (mises à jour comprises).
-// Changer ou réinitialiser un mot de passe invalide les sessions existantes du compte.
+// Sessions : cookie HttpOnly contenant un jeton aléatoire. Une session expire après SESSION_DAYS jours
+// (7 par défaut) ou après SESSION_IDLE_HOURS heures d'inactivité (48 par défaut). Elles survivent aux
+// redémarrages du serveur. Chaque appareil connecté peut être listé puis déconnecté.
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -16,20 +17,44 @@ import { promisify } from "node:util";
 const scrypt = promisify(crypto.scrypt);
 
 const COOKIE_NAME = "gm_session";
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+function envNumber(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+const SESSION_TTL_MS = envNumber("SESSION_DAYS", 7) * DAY_MS;
+const SESSION_IDLE_MS = envNumber("SESSION_IDLE_HOURS", 48) * HOUR_MS;
+const TOUCH_INTERVAL_MS = 5 * 60 * 1000; // la « dernière activité » n'est mise à jour que toutes les 5 minutes
+const FLUSH_DELAY_MS = 20 * 1000;
+const MAX_SESSIONS_PER_USER = 20;
+const TRUST_PROXY = process.env.TRUST_PROXY === "1";
+
+const LOG_MAX_BYTES = 1024 * 1024; // au-delà : le journal est archivé en auth-log.jsonl.1
+
 const USERNAME_RE = /^[A-Za-z0-9._-]{3,32}$/;
-const MIN_PASSWORD_LENGTH = 8;
+const MIN_PASSWORD_LENGTH = 12;
 const MAX_PASSWORD_LENGTH = 200;
 const KEY_LENGTH = 64;
 const DUMMY_SALT = "00".repeat(16);
 const MAX_FAILURES = 10;
 const FAILURE_WINDOW_MS = 10 * 60 * 1000;
 
+// Fragments qui rendent un mot de passe prévisible, même s'il est long
+const COMMON_FRAGMENTS = [
+  "password", "motdepasse", "passw0rd", "azerty", "qwerty", "123456", "654321", "111111", "000000", "abcdef",
+  "letmein", "welcome", "bonjour", "soleil", "doudou", "chocolat", "iloveyou", "admin", "changeme", "grunnamiam",
+  "recette", "football", "marseille", "superman", "trustno1",
+];
+
 function httpError(status, message) {
   return Object.assign(new Error(message), { status });
 }
 
 const publicUser = (user) => ({ id: user.id, username: user.username, role: user.role });
+const sha256Hex = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
 function readCookie(req, name) {
   for (const part of (req.headers.cookie ?? "").split(";")) {
@@ -39,15 +64,83 @@ function readCookie(req, name) {
   return null;
 }
 
+// ── Adresse IP et appareil ───────────────────────────────────────────────────
+const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+
+/**
+ * Adresse IP du client. Derrière un proxy inversé de confiance (même machine, ou TRUST_PROXY=1), on lit
+ * la dernière valeur de X-Forwarded-For ajoutée par ce proxy ; sinon l'en-tête est ignoré (falsifiable).
+ */
+function clientIp(req) {
+  const remote = req.socket.remoteAddress ?? "?";
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && (TRUST_PROXY || LOOPBACK.has(remote))) {
+    const last = forwarded.split(",").pop().trim();
+    if (last) return last.replace(/^::ffff:/, "");
+  }
+  return remote.replace(/^::ffff:/, "");
+}
+
+function describeDevice(userAgent = "") {
+  const os = /iPhone/.test(userAgent)
+    ? "iPhone"
+    : /iPad/.test(userAgent)
+      ? "iPad"
+      : /Android/.test(userAgent)
+        ? "Android"
+        : /Windows/.test(userAgent)
+          ? "Windows"
+          : /Macintosh|Mac OS X/.test(userAgent)
+            ? "Mac"
+            : /Linux/.test(userAgent)
+              ? "Linux"
+              : "Appareil";
+  const browser = /Edg\//.test(userAgent)
+    ? "Edge"
+    : /OPR\/|Opera/.test(userAgent)
+      ? "Opera"
+      : /Firefox|FxiOS/.test(userAgent)
+        ? "Firefox"
+        : /CriOS|Chrome/.test(userAgent)
+          ? "Chrome"
+          : /Safari/.test(userAgent)
+            ? "Safari"
+            : "navigateur inconnu";
+  return `${os} · ${browser}`;
+}
+
+// ── Règles de mot de passe ───────────────────────────────────────────────────
+/** Renvoie la raison pour laquelle le mot de passe est refusé, ou null s'il est acceptable. */
+export function passwordProblem(password, username = "") {
+  if (typeof password !== "string") return "Mot de passe invalide.";
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return `Le mot de passe doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères.`;
+  }
+  if (password.length > MAX_PASSWORD_LENGTH) return "Mot de passe trop long.";
+
+  const plain = password
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (username.length >= 3 && plain.includes(username.toLowerCase())) {
+    return "Le mot de passe ne doit pas contenir le nom d'utilisateur.";
+  }
+  if (new Set(plain).size < 5) return "Mot de passe trop répétitif.";
+  if (COMMON_FRAGMENTS.some((fragment) => plain.includes(fragment))) {
+    return "Mot de passe trop courant ou prévisible (évitez « azerty », « password », « 123456 »…).";
+  }
+  return null;
+}
+
 /**
  * @param {{ dataDir: string }} options
  */
 export function createAuth({ dataDir }) {
   const usersFile = path.join(dataDir, "users.json");
-  const secretFile = path.join(dataDir, "session.key");
+  const sessionsFile = path.join(dataDir, "sessions.json");
+  const logFile = path.join(dataDir, "auth-log.jsonl");
 
-  let cache = null; // { users, mtimeMs }
-  let secret = null;
+  let usersCache = null; // { users, mtimeMs }
   let queue = Promise.resolve();
   const failures = new Map(); // adresse IP -> horodatages des échecs récents
 
@@ -65,13 +158,13 @@ export function createAuth({ dataDir }) {
       stat = await fs.stat(usersFile);
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
-      cache = { users: [], mtimeMs: 0 };
-      return cache.users;
+      usersCache = { users: [], mtimeMs: 0 };
+      return usersCache.users;
     }
-    if (cache && cache.mtimeMs === stat.mtimeMs) return cache.users;
+    if (usersCache && usersCache.mtimeMs === stat.mtimeMs) return usersCache.users;
     const parsed = JSON.parse(await fs.readFile(usersFile, "utf8"));
-    cache = { users: Array.isArray(parsed.users) ? parsed.users : [], mtimeMs: stat.mtimeMs };
-    return cache.users;
+    usersCache = { users: Array.isArray(parsed.users) ? parsed.users : [], mtimeMs: stat.mtimeMs };
+    return usersCache.users;
   }
 
   async function writeUsers(users) {
@@ -79,28 +172,213 @@ export function createAuth({ dataDir }) {
     const tmp = `${usersFile}.tmp`;
     await fs.writeFile(tmp, JSON.stringify({ users }, null, 2), { encoding: "utf8", mode: 0o600 });
     await fs.rename(tmp, usersFile);
-    cache = { users, mtimeMs: (await fs.stat(usersFile)).mtimeMs };
+    usersCache = { users, mtimeMs: (await fs.stat(usersFile)).mtimeMs };
   }
 
-  async function getSecret() {
-    if (secret) return secret;
-    const readExisting = async () => Buffer.from((await fs.readFile(secretFile, "utf8")).trim(), "hex");
-    try {
-      secret = await readExisting();
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-      await fs.mkdir(dataDir, { recursive: true });
-      const fresh = crypto.randomBytes(32);
+  // ── Journal des connexions ───────────────────────────────────────────────
+  let logChain = Promise.resolve();
+
+  /**
+   * Ajoute un événement au journal. `req` peut être null (script en ligne de commande).
+   * Champs usuels : user (nom du compte connecté, ou nom saisi lors d'un échec), target, detail.
+   */
+  function audit(req, event, fields = {}) {
+    const entry = {
+      t: new Date().toISOString(),
+      event,
+      ip: req ? clientIp(req) : "local",
+      device: req ? describeDevice(req.headers["user-agent"]) : "ligne de commande",
+      ...fields,
+    };
+    logChain = logChain
+      .then(async () => {
+        await fs.mkdir(dataDir, { recursive: true });
+        try {
+          if ((await fs.stat(logFile)).size > LOG_MAX_BYTES) await fs.rename(logFile, `${logFile}.1`);
+        } catch (error) {
+          if (error.code !== "ENOENT") throw error;
+        }
+        await fs.appendFile(logFile, `${JSON.stringify(entry)}\n`, { encoding: "utf8", mode: 0o600 });
+      })
+      .catch((error) => console.error("[auth] journal :", error.message));
+    return logChain;
+  }
+
+  async function readAuditLog(limit = 200) {
+    await logChain;
+    const lines = [];
+    for (const file of [`${logFile}.1`, logFile]) {
       try {
-        await fs.writeFile(secretFile, fresh.toString("hex"), { mode: 0o600, flag: "wx" });
-        secret = fresh;
-      } catch (writeError) {
-        if (writeError.code !== "EEXIST") throw writeError;
-        secret = await readExisting();
+        lines.push(...(await fs.readFile(file, "utf8")).split("\n").filter(Boolean));
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
       }
     }
-    if (secret.length < 16) throw new Error(`Clé de session invalide : supprimez ${secretFile} pour en générer une nouvelle.`);
-    return secret;
+    return lines
+      .slice(-limit)
+      .reverse()
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  }
+
+  const safeName = (value) => (typeof value === "string" && USERNAME_RE.test(value.trim()) ? value.trim() : null);
+
+  // ── Sessions ─────────────────────────────────────────────────────────────
+  let sessions = null; // Map<id, session>
+  let sessionsPromise = null;
+  let dirty = false;
+  let flushTimer = null;
+  let flushChain = Promise.resolve();
+
+  function pruneSessions() {
+    const now = Date.now();
+    for (const [id, session] of sessions) {
+      if (now > session.expiresAt || now - session.lastSeenAt > SESSION_IDLE_MS) {
+        sessions.delete(id);
+        dirty = true;
+      }
+    }
+  }
+
+  function getSessions() {
+    sessionsPromise ??= (async () => {
+      const map = new Map();
+      try {
+        const parsed = JSON.parse(await fs.readFile(sessionsFile, "utf8"));
+        for (const session of parsed.sessions ?? []) map.set(session.id, session);
+      } catch (error) {
+        if (error.code !== "ENOENT") console.error("[auth] sessions.json illisible, sessions ignorées :", error.message);
+      }
+      sessions = map;
+      pruneSessions();
+      return map;
+    })();
+    return sessionsPromise;
+  }
+
+  function flush() {
+    flushChain = flushChain
+      .then(async () => {
+        if (!sessions || !dirty) return;
+        dirty = false;
+        pruneSessions();
+        await fs.mkdir(dataDir, { recursive: true });
+        const tmp = `${sessionsFile}.tmp`;
+        await fs.writeFile(tmp, JSON.stringify({ sessions: [...sessions.values()] }), { encoding: "utf8", mode: 0o600 });
+        await fs.rename(tmp, sessionsFile);
+      })
+      .catch((error) => {
+        dirty = true;
+        console.error("[auth] enregistrement des sessions :", error.message);
+      });
+    return flushChain;
+  }
+
+  // Les mises à jour de « dernière activité » sont regroupées ; les connexions/déconnexions sont écrites tout de suite.
+  function scheduleFlush() {
+    dirty = true;
+    if (flushTimer) return;
+    flushTimer = setTimeout(() => {
+      flushTimer = null;
+      void flush();
+    }, FLUSH_DELAY_MS);
+    flushTimer.unref?.();
+  }
+
+  async function createSession(req, user) {
+    const map = await getSessions();
+    const token = crypto.randomBytes(32).toString("base64url");
+    const now = Date.now();
+    const session = {
+      id: sha256Hex(token),
+      userId: user.id,
+      v: user.sessionVersion ?? 1,
+      createdAt: now,
+      lastSeenAt: now,
+      expiresAt: now + SESSION_TTL_MS,
+      ip: clientIp(req),
+      device: describeDevice(req.headers["user-agent"]),
+    };
+    map.set(session.id, session);
+
+    const mine = [...map.values()].filter((item) => item.userId === user.id).sort((a, b) => a.createdAt - b.createdAt);
+    while (mine.length > MAX_SESSIONS_PER_USER) map.delete(mine.shift().id);
+
+    dirty = true;
+    await flush();
+    return token;
+  }
+
+  async function dropSessions(userId, exceptId = null) {
+    const map = await getSessions();
+    let count = 0;
+    for (const [id, session] of map) {
+      if (session.userId === userId && id !== exceptId) {
+        map.delete(id);
+        count++;
+      }
+    }
+    if (count > 0) {
+      dirty = true;
+      await flush();
+    }
+    return count;
+  }
+
+  function buildCookie(req, value, maxAgeSeconds) {
+    const secure = req.socket.encrypted || req.headers["x-forwarded-proto"] === "https";
+    return `${COOKIE_NAME}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`;
+  }
+
+  const sessionCookie = (req, token) => buildCookie(req, token, Math.floor(SESSION_TTL_MS / 1000));
+
+  /** Renvoie { user, session } si la requête porte une session valide, sinon null. */
+  async function authenticate(req) {
+    const token = readCookie(req, COOKIE_NAME);
+    if (!token || token.length > 200) return null;
+
+    const map = await getSessions();
+    const session = map.get(sha256Hex(token));
+    if (!session) return null;
+
+    const now = Date.now();
+    const user = (await readUsers()).find((candidate) => candidate.id === session.userId);
+    const expired = now > session.expiresAt || now - session.lastSeenAt > SESSION_IDLE_MS;
+    // La version change quand le mot de passe est modifié ou réinitialisé : toutes les anciennes sessions tombent.
+    if (expired || !user || (user.sessionVersion ?? 1) !== session.v) {
+      map.delete(session.id);
+      scheduleFlush();
+      return null;
+    }
+
+    if (now - session.lastSeenAt > TOUCH_INTERVAL_MS) {
+      session.lastSeenAt = now;
+      session.ip = clientIp(req);
+      scheduleFlush();
+    }
+    return { user, session };
+  }
+
+  async function requireSession(req) {
+    const current = await authenticate(req);
+    if (!current) throw httpError(401, "Connexion requise.");
+    return current;
+  }
+
+  async function requireUser(req) {
+    return (await requireSession(req)).user;
+  }
+
+  async function requireAdmin(req) {
+    const user = await requireUser(req);
+    if (user.role !== "admin") throw httpError(403, "Réservé aux administrateurs.");
+    return user;
   }
 
   // ── Mots de passe ────────────────────────────────────────────────────────
@@ -124,19 +402,12 @@ export function createAuth({ dataDir }) {
     }
   }
 
-  function validatePassword(password) {
-    if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH) {
-      throw httpError(400, `Le mot de passe doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères.`);
-    }
-    if (password.length > MAX_PASSWORD_LENGTH) throw httpError(400, "Mot de passe trop long.");
+  function validatePassword(password, username) {
+    const problem = passwordProblem(password, username);
+    if (problem) throw httpError(400, problem);
   }
 
   // ── Limitation des tentatives de connexion (par adresse IP) ───────────────
-  function clientKey(req) {
-    const forwarded = req.headers["x-forwarded-for"];
-    return (typeof forwarded === "string" && forwarded.split(",")[0].trim()) || req.socket.remoteAddress || "?";
-  }
-
   function recentFailures(key) {
     const now = Date.now();
     const recent = (failures.get(key) ?? []).filter((time) => now - time < FAILURE_WINDOW_MS);
@@ -146,79 +417,29 @@ export function createAuth({ dataDir }) {
   }
 
   function assertNotThrottled(req) {
-    if (recentFailures(clientKey(req)).length >= MAX_FAILURES) {
+    if (recentFailures(clientIp(req)).length >= MAX_FAILURES) {
       throw httpError(429, "Trop de tentatives. Réessayez dans quelques minutes.");
     }
   }
 
   function recordFailure(req) {
-    const key = clientKey(req);
+    const key = clientIp(req);
     failures.set(key, [...recentFailures(key), Date.now()]);
   }
 
-  // ── Sessions ─────────────────────────────────────────────────────────────
-  function buildCookie(req, value, maxAgeSeconds) {
-    const secure = req.socket.encrypted || req.headers["x-forwarded-proto"] === "https";
-    return `${COOKIE_NAME}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`;
-  }
-
-  async function sessionCookie(req, user) {
-    const key = await getSecret();
-    const body = Buffer.from(
-      JSON.stringify({ u: user.id, v: user.sessionVersion ?? 1, e: Date.now() + SESSION_TTL_MS })
-    ).toString("base64url");
-    const signature = crypto.createHmac("sha256", key).update(body).digest("base64url");
-    return buildCookie(req, `${body}.${signature}`, Math.floor(SESSION_TTL_MS / 1000));
-  }
-
-  async function userFromRequest(req) {
-    const raw = readCookie(req, COOKIE_NAME);
-    if (!raw) return null;
-    const [body, signature] = raw.split(".");
-    if (!body || !signature) return null;
-
-    const key = await getSecret();
-    const expected = crypto.createHmac("sha256", key).update(body).digest();
-    const given = Buffer.from(signature, "base64url");
-    if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return null;
-
-    let payload;
-    try {
-      payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-    } catch {
-      return null;
-    }
-    if (!payload || typeof payload.e !== "number" || payload.e < Date.now()) return null;
-
-    const user = (await readUsers()).find((candidate) => candidate.id === payload.u);
-    return user && (user.sessionVersion ?? 1) === payload.v ? user : null;
-  }
-
-  async function requireUser(req) {
-    const user = await userFromRequest(req);
-    if (!user) throw httpError(401, "Connexion requise.");
-    return user;
-  }
-
-  async function requireAdmin(req) {
-    const user = await requireUser(req);
-    if (user.role !== "admin") throw httpError(403, "Réservé aux administrateurs.");
-    return user;
-  }
-
   // ── Gestion des comptes ──────────────────────────────────────────────────
-  async function createUser(input) {
+  async function createUser(req, input, actor) {
     const { username, password, role } = input ?? {};
     validateUsername(username);
-    validatePassword(password);
+    validatePassword(password, username);
     const { salt, hash } = await hashPassword(password);
 
-    return withLock(async () => {
+    const created = await withLock(async () => {
       const users = await readUsers();
       if (users.some((u) => u.username.toLowerCase() === username.toLowerCase())) {
         throw httpError(409, "Ce nom d'utilisateur existe déjà.");
       }
-      const created = {
+      const user = {
         id: Math.max(Date.now(), ...users.map((u) => u.id)) + 1,
         username,
         role: role === "admin" ? "admin" : "user",
@@ -227,19 +448,24 @@ export function createAuth({ dataDir }) {
         sessionVersion: 1,
         createdAt: new Date().toISOString(),
       };
-      await writeUsers([...users, created]);
-      return { ...publicUser(created), createdAt: created.createdAt };
+      await writeUsers([...users, user]);
+      return user;
     });
+    void audit(req, "user_created", { user: actor?.username ?? null, target: created.username, detail: created.role });
+    return { ...publicUser(created), createdAt: created.createdAt };
   }
 
-  async function resetPassword(id, password) {
-    validatePassword(password);
+  // Change le mot de passe et incrémente sessionVersion : toutes les sessions existantes du compte tombent.
+  async function setPassword(id, password) {
+    const target = (await readUsers()).find((u) => u.id === id);
+    if (!target) throw httpError(404, "Utilisateur introuvable.");
+    validatePassword(password, target.username);
     const { salt, hash } = await hashPassword(password);
     return withLock(async () => {
       const users = await readUsers();
-      const target = users.find((u) => u.id === id);
-      if (!target) throw httpError(404, "Utilisateur introuvable.");
-      const updated = { ...target, salt, hash, sessionVersion: (target.sessionVersion ?? 1) + 1 };
+      const current = users.find((u) => u.id === id);
+      if (!current) throw httpError(404, "Utilisateur introuvable.");
+      const updated = { ...current, salt, hash, sessionVersion: (current.sessionVersion ?? 1) + 1 };
       await writeUsers(users.map((u) => (u.id === id ? updated : u)));
       return updated;
     });
@@ -248,18 +474,24 @@ export function createAuth({ dataDir }) {
   return {
     requireUser,
     requireAdmin,
+    requireSession,
+    audit,
+    readAuditLog,
+
+    /** À appeler avant l'arrêt du serveur : écrit les sessions en attente. */
+    flush,
 
     async me(req) {
       const users = await readUsers();
-      const user = await userFromRequest(req);
-      return { user: user ? publicUser(user) : null, setupRequired: users.length === 0 };
+      const current = await authenticate(req);
+      return { user: current ? publicUser(current.user) : null, setupRequired: users.length === 0 };
     },
 
     /** Création du tout premier compte (administrateur) : possible uniquement tant qu'aucun compte n'existe. */
     async setup(req, input) {
       const { username, password } = input ?? {};
       validateUsername(username);
-      validatePassword(password);
+      validatePassword(password, username);
       const { salt, hash } = await hashPassword(password);
 
       const user = await withLock(async () => {
@@ -273,16 +505,25 @@ export function createAuth({ dataDir }) {
           hash,
           sessionVersion: 1,
           createdAt: new Date().toISOString(),
+          lastLoginAt: new Date().toISOString(),
         };
         await writeUsers([created]);
         return created;
       });
-      return { state: { user: publicUser(user), setupRequired: false }, cookie: await sessionCookie(req, user) };
+      void audit(req, "setup", { user: user.username });
+      const token = await createSession(req, user);
+      return { state: { user: publicUser(user), setupRequired: false }, cookie: sessionCookie(req, token) };
     },
 
     async login(req, input) {
-      assertNotThrottled(req);
       const { username, password } = input ?? {};
+      try {
+        assertNotThrottled(req);
+      } catch (error) {
+        void audit(req, "login_blocked", { user: safeName(username) });
+        throw error;
+      }
+
       const users = await readUsers();
       const user =
         typeof username === "string"
@@ -292,50 +533,129 @@ export function createAuth({ dataDir }) {
         typeof password === "string" && password.length <= MAX_PASSWORD_LENGTH && (await verifyPassword(user, password));
       if (!valid) {
         recordFailure(req);
+        void audit(req, "login_failed", { user: safeName(username), detail: user ? "mot de passe incorrect" : "compte inconnu" });
         throw httpError(401, "Identifiant ou mot de passe incorrect.");
       }
-      return { state: { user: publicUser(user), setupRequired: false }, cookie: await sessionCookie(req, user) };
+
+      await withLock(async () => {
+        const all = await readUsers();
+        await writeUsers(all.map((u) => (u.id === user.id ? { ...u, lastLoginAt: new Date().toISOString() } : u)));
+      });
+      void audit(req, "login_success", { user: user.username });
+      const token = await createSession(req, user);
+      return { state: { user: publicUser(user), setupRequired: false }, cookie: sessionCookie(req, token) };
     },
 
-    logoutCookie: (req) => buildCookie(req, "", 0),
+    /** Ferme la session courante ; renvoie le cookie qui efface celui du navigateur. */
+    async logout(req) {
+      const current = await authenticate(req);
+      if (current) {
+        (await getSessions()).delete(current.session.id);
+        dirty = true;
+        await flush();
+        void audit(req, "logout", { user: current.user.username });
+      }
+      return buildCookie(req, "", 0);
+    },
 
-    /** Change son propre mot de passe. Les autres sessions du compte sont fermées ; renvoie le cookie de la session courante. */
-    async changePassword(req, user, input) {
-      assertNotThrottled(req);
+    /** Change son propre mot de passe. Les autres appareils sont déconnectés, la session courante est conservée. */
+    async changePassword(req, { user, session }, input) {
+      try {
+        assertNotThrottled(req);
+      } catch (error) {
+        void audit(req, "login_blocked", { user: user.username, detail: "changement de mot de passe" });
+        throw error;
+      }
       const { current, next } = input ?? {};
-      validatePassword(next);
+      validatePassword(next, user.username);
       if (typeof current !== "string" || !(await verifyPassword(user, current))) {
         recordFailure(req);
+        void audit(req, "login_failed", { user: user.username, detail: "mot de passe actuel incorrect (changement de mot de passe)" });
         throw httpError(403, "Mot de passe actuel incorrect.");
       }
-      const updated = await resetPassword(user.id, next);
-      return sessionCookie(req, updated);
+      const updated = await setPassword(user.id, next);
+      session.v = updated.sessionVersion; // la session courante reste valide
+      await dropSessions(user.id, session.id);
+      dirty = true;
+      await flush();
+      void audit(req, "password_changed", { user: user.username });
     },
 
+    // ── Appareils connectés ──
+    async listSessions({ user, session }) {
+      const map = await getSessions();
+      return [...map.values()]
+        .filter((item) => item.userId === user.id)
+        .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+        .map((item) => ({
+          id: item.id,
+          device: item.device,
+          ip: item.ip,
+          createdAt: new Date(item.createdAt).toISOString(),
+          lastSeenAt: new Date(item.lastSeenAt).toISOString(),
+          expiresAt: new Date(item.expiresAt).toISOString(),
+          current: item.id === session.id,
+        }));
+    },
+
+    async revokeSession(req, { user, session }, id) {
+      const map = await getSessions();
+      const target = map.get(id);
+      if (!target || target.userId !== user.id) throw httpError(404, "Appareil introuvable.");
+      map.delete(id);
+      dirty = true;
+      await flush();
+      void audit(req, "session_revoked", { user: user.username, detail: target.device });
+      return { current: id === session.id };
+    },
+
+    async revokeOtherSessions(req, { user, session }) {
+      const count = await dropSessions(user.id, session.id);
+      void audit(req, "sessions_revoked", { user: user.username, detail: `${count} autre(s) appareil(s)` });
+      return { revoked: count };
+    },
+
+    // ── Administration des comptes ──
     async listUsers() {
-      return (await readUsers()).map((u) => ({ ...publicUser(u), createdAt: u.createdAt }));
+      return (await readUsers()).map((u) => ({ ...publicUser(u), createdAt: u.createdAt, lastLoginAt: u.lastLoginAt ?? null }));
     },
 
     createUser,
 
-    async deleteUser(actor, id) {
+    async deleteUser(req, actor, id) {
       if (id === actor.id) throw httpError(400, "Vous ne pouvez pas supprimer votre propre compte.");
-      await withLock(async () => {
+      const removed = await withLock(async () => {
         const users = await readUsers();
-        if (!users.some((u) => u.id === id)) throw httpError(404, "Utilisateur introuvable.");
+        const target = users.find((u) => u.id === id);
+        if (!target) throw httpError(404, "Utilisateur introuvable.");
         await writeUsers(users.filter((u) => u.id !== id));
+        return target;
       });
+      await dropSessions(id);
+      void audit(req, "user_deleted", { user: actor.username, target: removed.username });
     },
 
-    async resetPassword(id, password) {
-      await resetPassword(id, password);
+    async resetPassword(req, id, password, actor) {
+      const updated = await setPassword(id, password);
+      await dropSessions(id);
+      void audit(req, "password_reset", { user: actor.username, target: updated.username });
+    },
+
+    async revokeUserSessions(req, id, actor) {
+      const target = (await readUsers()).find((u) => u.id === id);
+      if (!target) throw httpError(404, "Utilisateur introuvable.");
+      const count = await dropSessions(id);
+      void audit(req, "sessions_revoked", { user: actor.username, target: target.username, detail: `${count} appareil(s)` });
+      return { revoked: count };
     },
 
     /** Utilisé par le script en ligne de commande. */
     async resetPasswordByName(username, password) {
       const target = (await readUsers()).find((u) => u.username.toLowerCase() === String(username).toLowerCase());
       if (!target) throw httpError(404, `Utilisateur « ${username} » introuvable.`);
-      await resetPassword(target.id, password);
+      await setPassword(target.id, password);
+      await dropSessions(target.id);
+      await audit(null, "password_reset", { user: "(ligne de commande)", target: target.username });
     },
   };
 }

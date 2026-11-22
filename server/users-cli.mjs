@@ -6,6 +6,7 @@
 //   node server/users-cli.mjs passwd <nom>
 //
 // Le mot de passe est demandé sans écho ; on peut aussi le passer par la variable GM_PASSWORD.
+// Règles : 12 caractères minimum, pas de mot de passe courant, pas le nom d'utilisateur.
 // Le dossier de données est celui du serveur : définissez DATA_DIR de la même façon que pour lui
 // (sur le Synology : « . deploy/config.sh » avant de lancer la commande).
 
@@ -54,7 +55,7 @@ async function main() {
     if (users.length === 0) console.log("Aucun compte.");
     else console.table(users.map(({ id, ...rest }) => rest));
   } else if (command === "add" && username) {
-    const created = await auth.createUser({ username, password: await readPassword(), role });
+    const created = await auth.createUser(null, { username, password: await readPassword(), role }, null);
     console.log(`Compte « ${created.username} » créé (${created.role}).`);
   } else if (command === "passwd" && username) {
     await auth.resetPasswordByName(username, await readPassword());

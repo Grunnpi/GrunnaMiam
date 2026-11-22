@@ -281,9 +281,12 @@ export function createApi({ dataDir, rootDir, updater }) {
 
     if (pathname === "/api/update") {
       if (!updater) throw new HttpError(404, "La mise à jour depuis l'application n'est pas activée sur ce serveur.");
-      await auth.requireAdmin(req);
+      const admin = await auth.requireAdmin(req);
       if (method === "GET") return sendJson(res, 200, updater.getStatus());
-      if (method === "POST") return sendJson(res, 202, updater.start());
+      if (method === "POST") {
+        void auth.audit(req, "update_started", { user: admin.username });
+        return sendJson(res, 202, updater.start());
+      }
       throw new HttpError(405, "Méthode non autorisée.");
     }
 
@@ -303,13 +306,42 @@ export function createApi({ dataDir, rootDir, updater }) {
     }
 
     if (pathname === "/api/auth/logout" && method === "POST") {
-      return sendJson(res, 200, { user: null, setupRequired: false }, { "Set-Cookie": auth.logoutCookie(req) });
+      const cookie = await auth.logout(req);
+      return sendJson(res, 200, { user: null, setupRequired: false }, { "Set-Cookie": cookie });
     }
 
     if (pathname === "/api/auth/password" && method === "POST") {
-      const user = await auth.requireUser(req);
-      const cookie = await auth.changePassword(req, user, await readJson(req));
-      return sendJson(res, 200, { ok: true }, { "Set-Cookie": cookie });
+      const current = await auth.requireSession(req);
+      await auth.changePassword(req, current, await readJson(req));
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // ── Appareils connectés (sessions du compte courant) ──
+    if (pathname === "/api/auth/sessions" && method === "GET") {
+      return sendJson(res, 200, await auth.listSessions(await auth.requireSession(req)));
+    }
+
+    if (pathname === "/api/auth/sessions/revoke-others" && method === "POST") {
+      return sendJson(res, 200, await auth.revokeOtherSessions(req, await auth.requireSession(req)));
+    }
+
+    if ((match = pathname.match(/^\/api\/auth\/sessions\/([a-f0-9]{64})$/)) && method === "DELETE") {
+      const result = await auth.revokeSession(req, await auth.requireSession(req), match[1]);
+      // Si c'est la session courante, on efface aussi le cookie du navigateur
+      const headers = result.current ? { "Set-Cookie": `gm_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0` } : {};
+      return sendJson(res, 200, { ok: true, current: result.current }, headers);
+    }
+
+    // ── Journal des connexions (administrateurs) ──
+    if (pathname === "/api/auth/log" && method === "GET") {
+      await auth.requireAdmin(req);
+      const limit = Number(new URL(req.url ?? "/", "http://localhost").searchParams.get("limit")) || 200;
+      return sendJson(res, 200, await auth.readAuditLog(Math.min(Math.max(limit, 1), 1000)));
+    }
+
+    if ((match = pathname.match(/^\/api\/users\/(\d+)\/revoke-sessions$/)) && method === "POST") {
+      const actor = await auth.requireAdmin(req);
+      return sendJson(res, 200, await auth.revokeUserSessions(req, Number(match[1]), actor));
     }
 
     if (pathname === "/api/users" && method === "GET") {
@@ -318,20 +350,20 @@ export function createApi({ dataDir, rootDir, updater }) {
     }
 
     if (pathname === "/api/users" && method === "POST") {
-      await auth.requireAdmin(req);
-      return sendJson(res, 201, await auth.createUser(await readJson(req)));
+      const actor = await auth.requireAdmin(req);
+      return sendJson(res, 201, await auth.createUser(req, await readJson(req), actor));
     }
 
     if ((match = pathname.match(/^\/api\/users\/(\d+)$/)) && method === "DELETE") {
       const actor = await auth.requireAdmin(req);
-      await auth.deleteUser(actor, Number(match[1]));
+      await auth.deleteUser(req, actor, Number(match[1]));
       return sendJson(res, 200, { ok: true });
     }
 
     if ((match = pathname.match(/^\/api\/users\/(\d+)\/password$/)) && method === "POST") {
-      await auth.requireAdmin(req);
+      const actor = await auth.requireAdmin(req);
       const body = await readJson(req);
-      await auth.resetPassword(Number(match[1]), body?.password);
+      await auth.resetPassword(req, Number(match[1]), body?.password, actor);
       return sendJson(res, 200, { ok: true });
     }
 
@@ -369,7 +401,7 @@ export function createApi({ dataDir, rootDir, updater }) {
     }
 
     if (pathname === "/api/recipes/delete" && method === "POST") {
-      await auth.requireUser(req);
+      const actor = await auth.requireUser(req);
       const body = await readJson(req);
       if (!body || !Array.isArray(body.ids) || !body.ids.every(isNumber)) {
         throw new HttpError(400, "Liste d'identifiants invalide.");
@@ -382,6 +414,7 @@ export function createApi({ dataDir, rootDir, updater }) {
         await commit();
         return before - current.recipes.length;
       });
+      void auth.audit(req, "recipes_deleted", { user: actor.username, detail: `${deleted} recette(s)` });
       return sendJson(res, 200, { deleted });
     }
 
@@ -421,7 +454,10 @@ export function createApi({ dataDir, rootDir, updater }) {
   }
 
   /** Résolu quand toutes les écritures en cours sont terminées (utile à l'arrêt). */
-  const idle = () => queue;
+  const idle = async () => {
+    await queue;
+    await auth.flush();
+  };
 
   return { handle, idle };
 }
