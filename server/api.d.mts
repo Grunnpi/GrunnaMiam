@@ -12,4 +12,6 @@ export function createApi(options: {
   handle(req: IncomingMessage, res: ServerResponse): Promise<boolean>
   /** Résolu quand toutes les écritures en cours sont terminées. */
   idle(): Promise<void>
+  /** Renvoie une recette (lecture seule) ou null si elle n'existe pas. */
+  getRecipe(id: number): Promise<Record<string, any> | null>
 }

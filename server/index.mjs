@@ -93,10 +93,96 @@ async function serveStatic(req, res, pathname) {
     .pipe(res);
 }
 
+// ── Liens partagés : page d'une recette avec balises d'aperçu (Open Graph) ──
+const escapeHtml = (value) =>
+  String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+function publicOrigin(req) {
+  const first = (value) => (typeof value === "string" ? value.split(",")[0].trim() : "");
+  const proto = first(req.headers["x-forwarded-proto"]) || (req.socket.encrypted ? "https" : "http");
+  const host = first(req.headers["x-forwarded-host"]) || req.headers.host || "localhost";
+  // Valeurs inattendues (en-têtes falsifiés) : on retombe sur une origine neutre
+  return /^https?$/.test(proto) && /^[A-Za-z0-9.\-:[\]]+$/.test(host) ? `${proto}://${host}` : "http://localhost";
+}
+
+function shareDescription(recipe) {
+  const description = typeof recipe.description === "string" ? recipe.description.trim() : "";
+  if (description) return description.slice(0, 200);
+  const ingredients = (recipe.ingredients ?? [])
+    .map((item) => item.name)
+    .filter(Boolean)
+    .slice(0, 8)
+    .join(", ");
+  return [
+    recipe.time ? `Temps : ${recipe.time}` : "",
+    `${recipe.servings} personne${recipe.servings > 1 ? "s" : ""}`,
+    ingredients ? `Ingrédients : ${ingredients}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ")
+    .slice(0, 200);
+}
+
+/** Renvoie true si la réponse a été envoyée ; false pour laisser le service normal du site (recette inconnue, site non compilé). */
+async function serveSharedRecipe(req, res, id) {
+  const recipe = await api.getRecipe(id);
+  if (!recipe) return false;
+
+  let html;
+  try {
+    html = await fs.readFile(path.join(DIST_DIR, "index.html"), "utf8");
+  } catch {
+    return false;
+  }
+
+  const origin = publicOrigin(req);
+  const title = `${recipe.title} · Recettes`;
+  const description = shareDescription(recipe);
+  const image =
+    typeof recipe.image === "string" && !/\.svg$/i.test(recipe.image)
+      ? recipe.image.startsWith("/api/images/")
+        ? `${origin}${recipe.image}`
+        : /^https?:\/\//i.test(recipe.image)
+          ? recipe.image
+          : ""
+      : "";
+
+  const tags = [
+    `<meta name="description" content="${escapeHtml(description)}">`,
+    `<meta property="og:type" content="article">`,
+    `<meta property="og:site_name" content="Recettes">`,
+    `<meta property="og:title" content="${escapeHtml(recipe.title)}">`,
+    `<meta property="og:description" content="${escapeHtml(description)}">`,
+    `<meta property="og:url" content="${escapeHtml(`${origin}/recette/${id}`)}">`,
+    image && `<meta property="og:image" content="${escapeHtml(image)}">`,
+    `<meta name="twitter:card" content="${image ? "summary_large_image" : "summary"}">`,
+  ]
+    .filter(Boolean)
+    .join("\n    ");
+
+  html = html
+    .replace(/<title>[\s\S]*?<\/title>/i, () => `<title>${escapeHtml(title)}</title>`)
+    .replace(/<\/head>/i, () => `    ${tags}\n  </head>`);
+
+  const body = Buffer.from(html, "utf8");
+  res.writeHead(200, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": body.length,
+    "Cache-Control": "no-cache",
+  });
+  res.end(req.method === "HEAD" ? undefined : body);
+  return true;
+}
+
 const server = http.createServer(async (req, res) => {
   try {
     if (await api.handle(req, res)) return;
     const { pathname } = new URL(req.url ?? "/", "http://localhost");
+
+    // Lien partagé /recette/123 : même application, avec un aperçu (titre, description, photo) pour les messageries
+    const shared = pathname.match(/^\/recette\/(\d+)\/?$/);
+    if (shared && (req.method === "GET" || req.method === "HEAD") && (await serveSharedRecipe(req, res, Number(shared[1])))) return;
+
     await serveStatic(req, res, pathname);
   } catch (error) {
     console.error(error);

@@ -139,9 +139,11 @@ Avec *Pages A5 à la suite*, chaque page est imprimée sur du A5 (ou enregistré
 
 - **Premier compte** : tant qu'aucun compte n'existe, l'application affiche « Créer le compte administrateur ». Pour ne pas laisser un autre visiteur vous devancer, créez-le immédiatement après un déploiement, ou en ligne de commande (voir plus bas).
 - **Gestion** : bouton de compte dans le header (« Connexion », puis votre nom). Un administrateur y crée des comptes (rôle *Utilisateur* ou *Administrateur*), réinitialise des mots de passe et supprime des comptes. Chacun peut changer son propre mot de passe.
-- **Mots de passe** : 8 caractères minimum, hachés avec scrypt (sel aléatoire par compte). Nom d'utilisateur : 3 à 32 caractères (lettres, chiffres, `.`, `-`, `_`), insensible à la casse.
-- **Sessions** : cookie `HttpOnly` signé, valable 30 jours, indépendant de la mémoire du serveur : il survit aux redémarrages et aux mises à jour. Changer ou réinitialiser un mot de passe ferme les sessions ouvertes de ce compte. Le cookie est marqué `Secure` quand le site est servi en HTTPS (y compris derrière un proxy inversé qui envoie `X-Forwarded-Proto: https`).
-- **Protections** : 10 échecs de connexion en 10 minutes bloquent temporairement l'adresse IP ; les écritures « inter-sites » sont refusées (`SameSite=Lax` + en-tête `Sec-Fetch-Site`).
+- **Mots de passe** : 12 caractères minimum, hachés avec scrypt (sel aléatoire par compte). Sont refusés : les mots de passe qui contiennent le nom d'utilisateur, une suite répétitive ou un fragment courant (« azerty », « password », « 123456 »…). Une phrase de plusieurs mots convient très bien. La règle s'applique à chaque création ou changement de mot de passe (les comptes existants gardent le leur tant qu'il n'est pas changé). Nom d'utilisateur : 3 à 32 caractères (lettres, chiffres, `.`, `-`, `_`), insensible à la casse.
+- **Sessions** : cookie `HttpOnly` contenant un jeton aléatoire (le serveur n'en garde que l'empreinte). Une session dure **7 jours au maximum** et se ferme après **48 h sans activité** (réglable : `SESSION_DAYS`, `SESSION_IDLE_HOURS`). Les sessions sont enregistrées dans `data/sessions.json` : elles survivent aux redémarrages et aux mises à jour. Changer ou réinitialiser un mot de passe ferme les sessions ouvertes de ce compte (seule la session qui change son propre mot de passe est conservée). Le cookie est marqué `Secure` quand le site est servi en HTTPS (y compris derrière un proxy inversé qui envoie `X-Forwarded-Proto: https`). Après une mise à jour depuis une version plus ancienne, tout le monde doit se reconnecter une fois.
+- **Appareils connectés** : dans *Mon compte → Mes appareils connectés*, chacun voit ses sessions ouvertes (appareil, adresse IP, dernière activité, date de fin), peut en déconnecter une, ou **déconnecter tous les autres appareils** d'un coup. Un administrateur peut aussi déconnecter tous les appareils d'un compte (bouton *Déconnecter* dans la liste des utilisateurs, qui indique aussi la dernière connexion de chacun).
+- **Journal de connexions** (administrateurs) : *Mon compte → Journal de connexions* liste les 200 derniers événements avec la date, l'adresse IP, l'appareil et **le nom du compte** : connexions réussies, échecs (nom saisi), blocages, déconnexions, changements ou réinitialisations de mot de passe, création/suppression de comptes, appareils déconnectés, recettes supprimées, mises à jour lancées. Le filtre « Échecs seulement » aide à repérer une tentative d'intrusion. Le fichier est `data/auth-log.jsonl` (une ligne JSON par événement, archivé en `auth-log.jsonl.1` au-delà de 1 Mo).
+- **Protections** : 10 échecs de connexion en 10 minutes bloquent temporairement l'adresse IP ; les écritures « inter-sites » sont refusées (`SameSite=Lax` + en-tête `Sec-Fetch-Site`). L'adresse IP des clients est lue dans `X-Forwarded-For` uniquement si la requête vient de la machine elle-même (proxy inversé du DSM) ou si `TRUST_PROXY=1` : sinon cet en-tête, falsifiable, est ignoré.
 - **Session expirée** : si une sauvegarde est refusée, l'interface repasse en lecture seule et un bandeau demande de se reconnecter ; les modifications locales sont alors envoyées automatiquement.
 
 ### Gérer les comptes en ligne de commande
@@ -221,6 +223,9 @@ Le bouton peut être désactivé avec `DISABLE_UPDATE=1`. Les données (`data/`)
 | `DATA_DIR` | `<projet>/data` | Dossier des données (recettes, images, comptes) |
 | `DIST_DIR` | `<projet>/dist` | Dossier du site compilé |
 | `DISABLE_UPDATE` | *(absent)* | `1` : désactive la mise à jour depuis l'application |
+| `SESSION_DAYS` | `7` | Durée maximale d'une session, en jours |
+| `SESSION_IDLE_HOURS` | `48` | Une session inactive depuis ce nombre d'heures est fermée |
+| `TRUST_PROXY` | *(absent)* | `1` : lire l'adresse IP des clients dans `X-Forwarded-For` même si le proxy est sur une autre machine |
 | `GRUNNAMIAM_SUPERVISED` | *(absent)* | `1` : le serveur est relancé par une boucle externe ; positionné automatiquement par `start-synology.sh` |
 
 `DATA_DIR` est aussi pris en compte par `npm run dev` / `npm run preview` et par `server/users-cli.mjs`.
@@ -238,6 +243,9 @@ cp deploy/config.example.sh deploy/config.sh
 # export DATA_DIR=/volume1/web/grunnamiam-data
 # export NODE_BIN=/usr/local/bin/node
 # export DISABLE_UPDATE=1
+# export SESSION_DAYS=7
+# export SESSION_IDLE_HOURS=48
+# export TRUST_PROXY=1
 ```
 
 | Variable | Rôle |
@@ -246,6 +254,8 @@ cp deploy/config.example.sh deploy/config.sh
 | `DATA_DIR` | Déplacer les données hors du dossier de l'application |
 | `NODE_BIN` | Chemin de `node` si la détection automatique échoue (binaire installé à la main) |
 | `DISABLE_UPDATE` | `1` pour désactiver le bouton de mise à jour |
+| `SESSION_DAYS`, `SESSION_IDLE_HOURS` | Durée maximale d'une session (7 jours) et délai d'inactivité (48 h) |
+| `TRUST_PROXY` | `1` seulement si un proxy inverse situé sur une autre machine transmet l'adresse IP des clients |
 
 Après modification, arrêtez puis relancez la tâche du Planificateur.
 
@@ -271,7 +281,8 @@ Tout est dans `data/` (ou `DATA_DIR`) :
 | `db.json.bak` | Version précédente de `db.json` (copie avant chaque écriture) |
 | `images/` | Photos des recettes, nommées par hash (`<sha1>.jpg`…), dédoublonnées ; les photos qui ne sont plus utilisées sont supprimées automatiquement |
 | `users.json` | Comptes (mots de passe hachés) |
-| `session.key` | Clé secrète de signature des sessions — **à ne jamais diffuser** ; la supprimer déconnecte tout le monde |
+| `sessions.json` | Sessions ouvertes (empreintes des jetons, appareil, adresse IP, dates) |
+| `auth-log.jsonl` | Journal des connexions et des actions sensibles (+ `auth-log.jsonl.1`, l'archive) |
 
 - **Sauvegarde** : copiez le dossier `data/` (Hyper Backup, copie planifiée…). L'export ZIP de l'application (*Menu → Gestion → Exporter*) contient les recettes, leurs images et les listes, mais pas les comptes.
 - **Écriture atomique** : `db.json` est écrit dans un fichier temporaire puis renommé ; un `db.json` illisible n'est jamais écrasé (le serveur répond en erreur et le journal indique la cause) — restaurez alors `db.json.bak`.
@@ -291,12 +302,14 @@ Toutes les routes sont préfixées par `/api`, réponses en JSON.
 | `GET /auth/me` | public | Utilisateur courant, et si la création du premier compte est requise |
 | `POST /auth/setup` | public, tant qu'aucun compte n'existe | Crée le premier administrateur |
 | `POST /auth/login` · `POST /auth/logout` | public | Connexion / déconnexion |
-| `POST /auth/password` | connecté | Change son mot de passe |
+| `POST /auth/password` | connecté | Change son mot de passe (ferme ses autres sessions) |
+| `GET /auth/sessions` · `POST /auth/sessions/revoke-others` · `DELETE /auth/sessions/:id` | connecté | Liste ses appareils connectés / déconnecte tous les autres / en déconnecte un |
 | `PUT /recipes/:id` | connecté | Crée ou remplace une recette (les images en `data:` sont enregistrées sur disque) |
 | `POST /recipes/delete` | connecté | Supprime des recettes (`{ "ids": [...] }`) |
 | `PUT /lists` | connecté | Remplace les listes de préférences |
 | `GET /users` · `POST /users` | administrateur | Liste / crée des comptes |
-| `DELETE /users/:id` · `POST /users/:id/password` | administrateur | Supprime un compte / réinitialise son mot de passe |
+| `DELETE /users/:id` · `POST /users/:id/password` · `POST /users/:id/revoke-sessions` | administrateur | Supprime un compte / réinitialise son mot de passe / déconnecte tous ses appareils |
+| `GET /auth/log?limit=200` | administrateur | Journal des connexions |
 | `GET /update` · `POST /update` | administrateur | État / lancement de la mise à jour |
 
 Limite de taille d'une requête : 40 Mo.
@@ -320,7 +333,7 @@ src/
 server/
   index.mjs          Serveur de production (site + API)
   api.mjs            Routes de l'API, stockage des recettes et des images
-  auth.mjs           Comptes, mots de passe, sessions
+  auth.mjs           Comptes, mots de passe, sessions, journal de connexions
   update.mjs         git pull + build + redémarrage
   users-cli.mjs      Gestion des comptes en ligne de commande
 deploy/
@@ -338,12 +351,14 @@ data/                Données (créé automatiquement, ignoré par git)
 |---|---|
 | « Serveur injoignable » | Le serveur n'est pas démarré, ou le port est incorrect. Voir `logs/server.log`. |
 | `EADDRINUSE` au démarrage | Le port est déjà pris : changez `PORT` ou arrêtez l'autre instance (ancien portail Web Station, ancienne tâche…). |
+| `EACCES` au démarrage (Windows) | Le port est souvent réservé par le système (Hyper-V, WSL, Docker) : vérifiez avec `netsh interface ipv4 show excludedportrange protocol=tcp`, puis choisissez un autre `PORT` (ex. `3200`). |
+| Mot de passe refusé (« trop courant », « trop court ») | Voir les règles dans [Comptes et droits](#comptes-et-droits) : 12 caractères minimum, pas de suite prévisible, pas le nom d'utilisateur. |
 | Écran « Créer le compte administrateur » alors que vous avez déjà des comptes | `users.json` est introuvable : vérifiez `DATA_DIR` (le serveur et le script de comptes doivent utiliser le même). |
 | Mot de passe administrateur perdu | `node server/users-cli.mjs passwd <nom>` en SSH. |
 | La mise à jour échoue à l'étape `git pull` | Dépôt privé sans identifiants, ou git signale un « dubious ownership » : `git config --global --add safe.directory /volume1/web/GrunnaMiam`. |
 | La mise à jour échoue à l'étape `npm` | Version de Node trop ancienne, ou pas d'accès réseau depuis le NAS. Le journal de l'étape s'affiche dans la fenêtre de mise à jour. |
 | Le serveur ne redémarre pas après une mise à jour | Il n'a pas été lancé par `start-synology.sh` : redémarrez-le à la main. |
-| « Session expirée » dans un bandeau | La session a été fermée (mot de passe changé, `session.key` supprimé, 30 jours écoulés) : reconnectez-vous, les modifications en attente sont alors envoyées. |
+| « Session expirée » dans un bandeau | La session a été fermée (mot de passe changé, appareil déconnecté, 7 jours ou 48 h d'inactivité écoulés) : reconnectez-vous, les modifications en attente sont alors envoyées. |
 | Ancien contenu affiché après un déploiement | Rechargez la page : le service worker se met à jour au chargement suivant. |
 | `data/db.json` illisible | Restaurez `data/db.json.bak` (ou une sauvegarde de `data/`). |
 

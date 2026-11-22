@@ -56,8 +56,12 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(APP_SHELL, copy));
+          // Seule la page d'accueil met à jour la copie hors ligne : une page de recette partagée (/recette/123)
+          // contient des balises d'aperçu propres à cette recette et ne doit pas la remplacer.
+          if (new URL(request.url).pathname === new URL(APP_SHELL).pathname) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(APP_SHELL, copy));
+          }
           return response;
         })
         .catch(async () => (await caches.match(request)) || caches.match(APP_SHELL))

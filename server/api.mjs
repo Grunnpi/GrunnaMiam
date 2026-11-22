@@ -459,5 +459,10 @@ export function createApi({ dataDir, rootDir, updater }) {
     await auth.flush();
   };
 
-  return { handle, idle };
+  /** Renvoie une recette (ou null) : sert à préparer l'aperçu d'un lien partagé. */
+  async function getRecipe(id) {
+    return withLock(async () => (await load()).recipes.find((recipe) => recipe.id === id) ?? null);
+  }
+
+  return { handle, idle, getRecipe };
 }

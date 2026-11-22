@@ -9,7 +9,7 @@
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)" || exit 1
 cd "$APP_DIR" || exit 1
 
-# Réglages locaux (UPDATE_TOKEN, PORT, DATA_DIR, NODE_BIN…)
+# Réglages locaux (PORT, DATA_DIR, NODE_BIN…)
 [ -f "$APP_DIR/deploy/config.sh" ] && . "$APP_DIR/deploy/config.sh"
 
 export PORT="${PORT:-3100}"
@@ -37,10 +37,22 @@ CHILD=""
 trap 'echo "[$(date)] arrêt demandé" >> "$LOG"; [ -n "$CHILD" ] && kill "$CHILD" 2>/dev/null; exit 0' TERM INT
 
 echo "[$(date)] démarrage avec $NODE_BIN ($("$NODE_BIN" --version))" >> "$LOG"
+# Si le serveur s'arrête aussitôt après son démarrage (port refusé, erreur de configuration…), le délai avant la relance
+# double à chaque échec (3, 6, 12… puis 60 secondes maximum) au lieu de tourner en boucle toutes les 3 secondes.
+DELAY=3
 while true; do
+  STARTED=$(date +%s)
   "$NODE_BIN" server/index.mjs >> "$LOG" 2>&1 &
   CHILD=$!
   wait "$CHILD"
-  echo "[$(date)] le serveur s'est arrêté (code $?), relance dans 3 s" >> "$LOG"
-  sleep 3
+  CODE=$?
+  if [ $(( $(date +%s) - STARTED )) -ge 30 ]; then
+    DELAY=3   # il a tourné normalement : on repart sur le délai de base
+  fi
+  echo "[$(date)] le serveur s'est arrêté (code $CODE), relance dans $DELAY s" >> "$LOG"
+  sleep "$DELAY"
+  if [ "$DELAY" -lt 60 ]; then
+    DELAY=$(( DELAY * 2 ))
+    [ "$DELAY" -gt 60 ] && DELAY=60
+  fi
 done
