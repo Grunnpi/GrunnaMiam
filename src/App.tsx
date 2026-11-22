@@ -5,7 +5,7 @@ import BookletView from "./BookletView";
 import TextImportView from "./TextImportView";
 import UpdatePanel from "./UpdatePanel";
 import UserMenu from "./UserMenu";
-import VersionBadge from "./VersionBadge";
+import VersionBadge, { VersionDetails } from "./VersionBadge";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type IngredientRole = "required" | "optional" | "excluded";
@@ -36,6 +36,8 @@ export interface Recipe {
   tags: string[];
   ingredients: Ingredient[];
   description: string;
+  /** D'où vient la recette : livre, site, personne… (une URL est affichée comme lien). */
+  origin?: string;
   steps: Step[];
 }
 
@@ -1011,9 +1013,10 @@ function RecipeForm({
     time: "",
     servings: 4,
     difficulty: "Facile",
-    tags: [],
+    tags: ["new"], // tag proposé par défaut pour repérer les recettes récentes (modifiable)
     ingredients: [{ name: "", quantity: "" }],
     description: "",
+    origin: "",
     steps: [{ title: "", instruction: "", photos: [] }],
   });
 
@@ -1187,6 +1190,17 @@ function RecipeForm({
               placeholder="Courte description de la recette…"
               rows={2}
               className={`${inputCls} resize-none`}
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Origine</label>
+            <input
+              type="text"
+              value={draft.origin ?? ""}
+              onChange={(e) => patch("origin", e.target.value)}
+              placeholder="Livre, site (lien), personne… ex : Mamie Jeanne"
+              className={inputCls}
+              autoComplete="off"
             />
           </div>
           <div className="grid grid-cols-3 gap-3">
@@ -1437,6 +1451,43 @@ function RecipeForm({
 }
 
 // ── Recipe Detail View ─────────────────────────────────────────────────────
+// ── Origine d'une recette ─────────────────────────────────────────────────────────────────
+function OriginBlock({ origin }: { origin?: string }) {
+  const text = origin?.trim();
+  if (!text) return null;
+
+  // Les liens http(s) du texte sont cliquables ; le reste est affiché tel quel.
+  const parts = text.split(/(https?:\/\/[^\s]+)/g);
+
+  return (
+    <section className="flex items-start gap-3 rounded-2xl border border-[var(--border)] bg-[var(--card)] px-5 py-4">
+      <span aria-hidden className="text-xl leading-none">
+        📍
+      </span>
+      <div className="min-w-0">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-[var(--muted-foreground)]">Origine</h2>
+        <p className="mt-1 text-sm leading-relaxed break-words">
+          {parts.map((part, index) =>
+            /^https?:\/\//.test(part) ? (
+              <a
+                key={index}
+                href={part}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[var(--primary)] underline hover:no-underline"
+              >
+                {part}
+              </a>
+            ) : (
+              <span key={index}>{part}</span>
+            )
+          )}
+        </p>
+      </div>
+    </section>
+  );
+}
+
 function RecipeDetail({
   recipe,
   recipes,
@@ -1579,6 +1630,8 @@ function RecipeDetail({
             </div>
           </div>
         </section>
+
+        <OriginBlock origin={recipe.origin} />
 
         {/* Ingredients */}
         <section className="bg-[var(--card)] rounded-2xl border border-[var(--border)] p-5 sm:p-6">
@@ -1724,7 +1777,14 @@ function PreferenceListsPanel({
           : "text-xs text-[var(--primary)] border border-[var(--primary)]/30 px-2.5 py-1.5 rounded-lg hover:bg-[var(--primary)]/5 transition-colors"}
       >
         {recipeId === undefined ? (
-          selectedList ? `Liste : ${selectedList.name}` : `Mes listes${lists.length ? ` (${lists.length})` : ""}`
+          selectedList ? (
+            <span className="inline-block max-w-[7rem] truncate align-bottom">{`Liste : ${selectedList.name}`}</span>
+          ) : (
+            <>
+              <span className="hidden sm:inline">{`Mes listes${lists.length ? ` (${lists.length})` : ""}`}</span>
+              <span className="sm:hidden">Listes</span>
+            </>
+          )
         ) : (
           <>
             <span className="hidden sm:inline">Ajouter à une liste</span>
@@ -1910,12 +1970,16 @@ function PreferenceListsPanel({
 
 // ── Recipe data import/export ──────────────────────────────────────────────
 function RecipeDataManager({
+  open,
+  onClose,
   recipeCount,
   listCount,
   onExport,
   onImport,
   onDeleteAll,
 }: {
+  open: boolean;
+  onClose: () => void;
   recipeCount: number;
   listCount: number;
   onExport: () => Promise<void>;
@@ -1924,7 +1988,11 @@ function RecipeDataManager({
 }) {
   const importInput = useRef<HTMLInputElement>(null);
   const { canEdit } = useAuth();
-  const [isOpen, setIsOpen] = useState(false);
+  // Ouverture pilotée par le menu de gestion
+  const isOpen = open;
+  const setIsOpen = (value: boolean) => {
+    if (!value) onClose();
+  };
   const [mode, setMode] = useState<ImportMode>("replace");
   const [isWorking, setIsWorking] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -1972,14 +2040,6 @@ function RecipeDataManager({
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setIsOpen(true)}
-        className="text-xs border border-[var(--border)] text-[var(--muted-foreground)] px-3 py-1.5 rounded-lg hover:border-[var(--primary)] hover:text-[var(--primary)] transition-colors"
-      >
-        Gérer
-      </button>
-
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
           <button
@@ -1991,7 +2051,7 @@ function RecipeDataManager({
           <div className="relative w-full sm:max-w-lg max-h-[90vh] overflow-y-auto rounded-t-2xl sm:rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-2xl">
             <div className="flex items-center justify-between gap-4 px-5 py-4 border-b border-[var(--border)]">
               <div>
-                <h2 className="font-display text-xl">Gérer les recettes</h2>
+                <h2 className="font-display text-xl">Gestion</h2>
                 <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
                   {recipeCount} recette{recipeCount !== 1 ? "s" : ""} · {listCount} liste{listCount !== 1 ? "s" : ""}
                 </p>
@@ -2088,6 +2148,8 @@ function RecipeDataManager({
               </section>
               )}
 
+              <VersionDetails />
+
               <UpdatePanel />
 
               {canEdit && (
@@ -2143,6 +2205,116 @@ function normalizeText(value: string) {
     .toLowerCase();
 }
 
+// ── Menu de gestion (comptes connectés) ──
+function ManageMenu({
+  recipeCount,
+  listCount,
+  onNewRecipe,
+  onImportText,
+  onOpenBooklet,
+  onExport,
+  onImport,
+  onDeleteAll,
+}: {
+  recipeCount: number;
+  listCount: number;
+  onNewRecipe: () => void;
+  onImportText: () => void;
+  onOpenBooklet: () => void;
+  onExport: () => Promise<void>;
+  onImport: (file: File, mode: ImportMode) => Promise<{ recipeCount: number; listCount: number }>;
+  onDeleteAll: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [dataOpen, setDataOpen] = useState(false);
+  const container = useRef<HTMLDivElement>(null);
+
+  // Ferme le menu au clic/toucher en dehors, ou avec Échap
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!container.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [menuOpen]);
+
+  const run = (action: () => void) => () => {
+    setMenuOpen(false);
+    action();
+  };
+
+  const itemCls =
+    "flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-[var(--muted)] transition-colors";
+  const groupCls =
+    "px-4 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]";
+
+  return (
+    <div ref={container} className="relative">
+      <button
+        type="button"
+        onClick={() => setMenuOpen((open) => !open)}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        className="flex items-center gap-1.5 rounded-lg bg-[var(--primary)] px-3 py-1.5 text-xs font-medium text-[var(--primary-foreground)] hover:opacity-90 transition-opacity"
+      >
+        <span aria-hidden>☰</span>
+        <span className="hidden sm:inline">Menu</span>
+        <span className="sr-only sm:hidden">Menu</span>
+      </button>
+
+      {menuOpen && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-40 mt-2 w-64 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--card)] py-1.5 shadow-xl"
+        >
+          <p className={groupCls}>Nouvelle recette</p>
+          <button type="button" role="menuitem" onClick={run(onNewRecipe)} className={itemCls}>
+            <span aria-hidden>✏️</span> Saisir une recette
+          </button>
+          <button type="button" role="menuitem" onClick={run(onImportText)} className={itemCls}>
+            <span aria-hidden>📝</span> Depuis un texte (OCR)
+          </button>
+
+          <div className="my-1.5 border-t border-[var(--border)]" />
+          <p className={groupCls}>Impression</p>
+          <button type="button" role="menuitem" onClick={run(onOpenBooklet)} className={itemCls}>
+            <span aria-hidden>📖</span> Livret imprimable
+          </button>
+
+          <div className="my-1.5 border-t border-[var(--border)]" />
+          <p className={groupCls}>Gestion</p>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={run(() => setDataOpen(true))}
+            className={itemCls}
+          >
+            <span aria-hidden>⚙️</span> Export, import, version…
+          </button>
+        </div>
+      )}
+
+      <RecipeDataManager
+        open={dataOpen}
+        onClose={() => setDataOpen(false)}
+        recipeCount={recipeCount}
+        listCount={listCount}
+        onExport={onExport}
+        onImport={onImport}
+        onDeleteAll={onDeleteAll}
+      />
+    </div>
+  );
+}
+
 function SearchView({
   recipes,
   preferenceLists,
@@ -2180,6 +2352,10 @@ function SearchView({
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [titleQuery, setTitleQuery] = useState("");
   const { canEdit } = useAuth();
+  // Recherche repliée par défaut sur petit écran, dépliée sur grand écran
+  const [searchOpen, setSearchOpen] = useState(
+    () => typeof window === "undefined" || !window.matchMedia("(max-width: 639px)").matches
+  );
 
   const availableIngredients = useMemo(
     () =>
@@ -2283,27 +2459,23 @@ function SearchView({
   const optionalCount = filters.filter((f) => f.role === "optional").length;
   const excludedCount = filters.filter((f) => f.role === "excluded").length;
   const noFilters = filters.length === 0 && selectedTags.length === 0 && !titleQuery.trim();
+  const activeCount = filters.length + selectedTags.length + (titleQuery.trim() ? 1 : 0) + (selectedList ? 1 : 0);
 
   return (
     <div className="min-h-screen bg-[var(--background)]">
       <header className="border-b border-[var(--border)] bg-[var(--card)] sticky top-0 z-30">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-          <div>
-            <h1 className="font-display text-2xl sm:text-3xl text-[var(--foreground)] leading-none">Recettes</h1>
-            <p className="text-xs text-[var(--muted-foreground)] mt-0.5">par ingrédients</p>
-            <VersionBadge />
+        <div className="max-w-5xl mx-auto px-3 py-2 sm:px-4 sm:py-3 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="font-display text-xl sm:text-3xl text-[var(--foreground)] leading-none">Recettes</h1>
+            <div className="hidden sm:block">
+              <p className="text-xs text-[var(--muted-foreground)] mt-0.5">par ingrédients</p>
+              <VersionBadge />
+            </div>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex items-center justify-end gap-1.5 sm:gap-2">
             <span className="text-xs bg-[var(--muted)] text-[var(--muted-foreground)] px-2 py-1 rounded-full hidden sm:inline">
               {filteredRecipes.length} recette{filteredRecipes.length !== 1 ? "s" : ""}
             </span>
-            <RecipeDataManager
-              recipeCount={recipes.length}
-              listCount={preferenceLists.length}
-              onExport={onExport}
-              onImport={onImport}
-              onDeleteAll={onDeleteAll}
-            />
             <PreferenceListsPanel
               recipes={recipes}
               lists={preferenceLists}
@@ -2313,39 +2485,44 @@ function SearchView({
               onDelete={onDeleteList}
               onSelectList={setSelectedListId}
             />
-            <button
-              type="button"
-              onClick={onOpenBooklet}
-              title="Imprimer un livret de recettes (petit cahier A5)"
-              className="text-xs border border-[var(--border)] text-[var(--muted-foreground)] px-3 py-1.5 rounded-lg hover:border-[var(--primary)] hover:text-[var(--primary)] transition-colors"
-            >
-              📖 Livret
-            </button>
             {canEdit && (
-            <button
-              onClick={onNewRecipe}
-              className="bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-medium px-3 py-1.5 rounded-lg hover:opacity-90 transition-opacity flex items-center gap-1.5"
-            >
-              <span className="text-sm leading-none">+</span>
-              <span>Nouvelle recette</span>
-            </button>
-            )}
-            {canEdit && (
-            <button
-              type="button"
-              onClick={onImportText}
-              title="Créer une recette à partir d'un texte copié (OCR, iPhone…)"
-              className="text-xs border border-[var(--border)] text-[var(--muted-foreground)] px-3 py-1.5 rounded-lg hover:border-[var(--primary)] hover:text-[var(--primary)] transition-colors"
-            >
-              📝 Depuis un texte
-            </button>
+              <ManageMenu
+                recipeCount={recipes.length}
+                listCount={preferenceLists.length}
+                onNewRecipe={onNewRecipe}
+                onImportText={onImportText}
+                onOpenBooklet={onOpenBooklet}
+                onExport={onExport}
+                onImport={onImport}
+                onDeleteAll={onDeleteAll}
+              />
             )}
             <UserMenu />
           </div>
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
+      <main className="max-w-5xl mx-auto px-3 py-4 sm:px-4 sm:py-6 space-y-4 sm:space-y-6">
+        {/* Recherche : repliée par défaut sur petit écran */}
+        <button
+          type="button"
+          onClick={() => setSearchOpen((open) => !open)}
+          aria-expanded={searchOpen}
+          className="w-full flex items-center justify-between gap-3 rounded-2xl border border-[var(--border)] bg-[var(--card)] px-4 py-3 text-left shadow-sm"
+        >
+          <span className="flex items-center gap-2 text-sm font-medium">
+            🔍 Rechercher et filtrer
+            {activeCount > 0 && (
+              <span className="rounded-full bg-[var(--primary)] px-2 py-0.5 text-[10px] font-medium text-[var(--primary-foreground)]">
+                {activeCount}
+              </span>
+            )}
+          </span>
+          <span className={`text-xs text-[var(--muted-foreground)] transition-transform ${searchOpen ? "rotate-180" : ""}`}>
+            ▼
+          </span>
+        </button>
+
         {/* Recherche par titre */}
         <input
           type="search"
@@ -2354,11 +2531,11 @@ function SearchView({
           placeholder="Rechercher une recette par son titre…"
           aria-label="Rechercher une recette par son titre"
           autoComplete="off"
-          className="w-full bg-[var(--card)] border border-[var(--border)] rounded-2xl px-4 py-3 text-sm shadow-sm placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] transition"
+          className={`w-full bg-[var(--card)] border border-[var(--border)] rounded-2xl px-4 py-3 text-sm shadow-sm placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] transition${searchOpen ? "" : " hidden"}`}
         />
 
         {/* Search panel */}
-        <section className="bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-5 shadow-sm">
+        <section className={`bg-[var(--card)] border border-[var(--border)] rounded-2xl p-5 space-y-5 shadow-sm${searchOpen ? "" : " hidden"}`}>
           <div>
             <h2 className="font-display text-xl">Chercher par ingrédients</h2>
             <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
@@ -2892,7 +3069,7 @@ export default function App() {
     );
   }
 
-  if (view.name === "booklet") {
+  if (view.name === "booklet" && canEdit) {
     return (
       <BookletView
         recipes={recipes}

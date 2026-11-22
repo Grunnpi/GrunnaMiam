@@ -134,6 +134,12 @@
   font-style: italic;
   color: #3d372f;
 }
+.bk-origin {
+  margin: 2mm 0 0;
+  font-size: 8pt;
+  color: var(--bk-muted);
+  overflow-wrap: anywhere;
+}
 
 .bk-h3 {
   margin: 0 0 2.5mm;

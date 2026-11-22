@@ -82,6 +82,7 @@ export default function TextImportView({
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [origin, setOrigin] = useState("");
   const [servings, setServings] = useState("4");
   const [time, setTime] = useState("");
   const [timeEstimated, setTimeEstimated] = useState(false);
@@ -101,7 +102,8 @@ export default function TextImportView({
     setTime(parsed.time);
     setTimeEstimated(parsed.timeEstimated);
     setDifficulty(parsed.difficulty ?? "Facile");
-    setTags("");
+    setTags("new"); // tag par défaut des nouvelles recettes (modifiable)
+    setOrigin("");
     setIngredients(parsed.ingredients.map((ingredient) => ({ id: nextId.current++, ...ingredient })));
     setSteps(parsed.steps.map((step) => ({ id: nextId.current++, ...step })));
     setPhase("review");
@@ -183,6 +185,7 @@ export default function TextImportView({
       ),
       ingredients: validIngredients.map((item) => ({ name: item.name.trim(), quantity: item.quantity.trim() })),
       description: description.trim(),
+      origin: origin.trim(),
       steps: validSteps.map((item) => ({
         title: item.title.trim() || item.instruction.trim().split(/\s+/).slice(0, 5).join(" "),
         instruction: item.instruction.trim(),
@@ -364,6 +367,16 @@ export default function TextImportView({
                 rows={2}
                 placeholder="Description (facultatif)"
                 aria-label="Description"
+                className={fieldCls}
+              />
+
+              <input
+                type="text"
+                value={origin}
+                onChange={(event) => setOrigin(event.target.value)}
+                placeholder="Origine : livre, site (lien), personne…"
+                aria-label="Origine de la recette"
+                autoComplete="off"
                 className={fieldCls}
               />
             </Section>

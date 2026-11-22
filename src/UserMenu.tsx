@@ -31,7 +31,15 @@ export default function UserMenu() {
         className="text-xs border border-[var(--border)] text-[var(--muted-foreground)] px-3 py-1.5 rounded-lg hover:border-[var(--primary)] hover:text-[var(--primary)] transition-colors max-w-[10rem] truncate"
         title={user ? "Mon compte" : "Se connecter pour modifier les recettes"}
       >
-        {user ? `👤 ${user.username}` : "Connexion"}
+        {user ? (
+          <>
+            <span aria-hidden>👤</span>
+            <span className="hidden sm:inline"> {user.username}</span>
+            <span className="sr-only sm:hidden">{user.username}</span>
+          </>
+        ) : (
+          "Connexion"
+        )}
       </button>
 
       {isOpen && (

@@ -29,8 +29,8 @@ Les données sont stockées **sur le serveur** (pas dans le navigateur) et parta
 | | Visiteur (sans compte) | Utilisateur | Administrateur |
 |---|:-:|:-:|:-:|
 | Consulter, rechercher, filtrer, voir les listes | ✅ | ✅ | ✅ |
-| Exporter les recettes (ZIP) | ✅ | ✅ | ✅ |
-| Imprimer un livret de recettes | ✅ | ✅ | ✅ |
+| Exporter les recettes (ZIP) | ❌ | ✅ | ✅ |
+| Imprimer un livret de recettes | ❌ | ✅ | ✅ |
 | Créer une recette depuis un texte (OCR) | ❌ | ✅ | ✅ |
 | Créer / modifier / supprimer une recette | ❌ | ✅ | ✅ |
 | Importer un ZIP, tout supprimer | ❌ | ✅ | ✅ |
@@ -39,7 +39,11 @@ Les données sont stockées **sur le serveur** (pas dans le navigateur) et parta
 | Mettre à jour l'application | ❌ | ❌ | ✅ |
 
 - **Recherche par titre** : insensible à la casse et aux accents ; tous les mots saisis doivent figurer dans le titre. Se combine avec les filtres ingrédients, tags et listes.
-- **Header** : affiche la version, le commit git et l'heure de démarrage du serveur.
+- **Menu** (comptes connectés uniquement) : un seul bouton **☰ Menu** regroupe *Nouvelle recette* (saisir, ou depuis un texte), *Impression* (livret) et *Gestion* (export, import, version, mise à jour, suppression de toutes les recettes). Un visiteur sans compte ne voit que la recherche, les listes et la connexion.
+- **Origine** : champ facultatif de chaque recette (livre, site, personne…), affiché dans un bloc « Origine » sur la page de la recette et dans le livret ; un lien `https://…` est cliquable. Il se renseigne dans le formulaire et dans « Depuis un texte ».
+- **Tag `new`** : proposé par défaut à la création d'une recette (formulaire et « Depuis un texte »), pour retrouver les recettes récentes avec le filtre par tags ; il se retire comme n'importe quel tag.
+- **Petit écran** : la recherche (titre, ingrédients, tags) est **repliée par défaut** derrière la barre « 🔍 Rechercher et filtrer » (qui indique le nombre de filtres actifs) ; le header est réduit et la version s'affiche dans *Menu → Gestion*.
+- **Header** : sur grand écran, affiche la version, le commit git et l'heure de démarrage du serveur.
 - **Suppression d'une recette** : bouton « Supprimer » sur la page de la recette, avec confirmation. Ses photos sont effacées du disque et elle est retirée des listes.
 
 ## Démarrage rapide (poste de dev)
@@ -53,7 +57,7 @@ npm run dev
 
 Ouvrir http://localhost:8443. L'API est montée directement dans le serveur de dev : rien d'autre à lancer. Les données sont écrites dans `./data`.
 
-Au tout premier lancement, l'application demande de **créer le compte administrateur**, puis charge 10 recettes d'exemple (supprimables avec *Gérer → Supprimer toutes les recettes*).
+Au tout premier lancement, l'application demande de **créer le compte administrateur**, puis charge 10 recettes d'exemple (supprimables avec *Menu → Gestion → Supprimer toutes les recettes*).
 
 Tester comme en production :
 
@@ -64,7 +68,7 @@ npm start          # http://localhost:3100
 
 ## Créer une recette depuis un texte
 
-Le bouton **📝 Depuis un texte** (en haut de la liste, pour les comptes connectés) crée une recette à partir d'un texte copié, typiquement celui du **« Texte en direct » de l'iPhone** :
+Le bouton **☰ Menu → Depuis un texte (OCR)** (comptes connectés) crée une recette à partir d'un texte copié, typiquement celui du **« Texte en direct » de l'iPhone** :
 
 1. Sur l'iPhone, ouvrez l'appareil photo, visez la recette, touchez le bouton « Texte en direct », puis *Tout sélectionner* → *Copier* (marche aussi sur une photo ou une capture d'écran, dans l'app Photos).
 2. Dans l'application, ouvrez **Depuis un texte**, collez le texte, touchez **Analyser le texte**.
@@ -106,7 +110,7 @@ L'analyse se fait dans le navigateur, sans envoyer le texte à un service extern
 
 ## Imprimer un livret
 
-Le bouton **📖 Livret** (en haut de la liste) ouvre un écran qui met en page les recettes en petit cahier au format A5, prêt à imprimer. Il est accessible à tout le monde, sans compte.
+Le bouton **☰ Menu → Livret imprimable** (comptes connectés) ouvre un écran qui met en page les recettes en petit cahier au format A5, prêt à imprimer.
 
 **Réglages disponibles**
 
@@ -193,7 +197,7 @@ Le serveur n'a besoin ni de Docker ni de dépendances : seulement Node.js, git (
 
 ## Mise à jour depuis l'application
 
-*Gérer → Mise à jour de l'application → Mettre à jour maintenant* (réservé aux administrateurs). Le serveur exécute :
+*Menu → Gestion → Mettre à jour maintenant* (réservé aux administrateurs). Le serveur exécute :
 
 1. `git pull --ff-only`
 2. `npm ci --include=dev` — uniquement si `package-lock.json` a changé ou si `node_modules` est absent
@@ -269,10 +273,10 @@ Tout est dans `data/` (ou `DATA_DIR`) :
 | `users.json` | Comptes (mots de passe hachés) |
 | `session.key` | Clé secrète de signature des sessions — **à ne jamais diffuser** ; la supprimer déconnecte tout le monde |
 
-- **Sauvegarde** : copiez le dossier `data/` (Hyper Backup, copie planifiée…). L'export ZIP de l'application (*Gérer → Exporter*) contient les recettes, leurs images et les listes, mais pas les comptes.
+- **Sauvegarde** : copiez le dossier `data/` (Hyper Backup, copie planifiée…). L'export ZIP de l'application (*Menu → Gestion → Exporter*) contient les recettes, leurs images et les listes, mais pas les comptes.
 - **Écriture atomique** : `db.json` est écrit dans un fichier temporaire puis renommé ; un `db.json` illisible n'est jamais écrasé (le serveur répond en erreur et le journal indique la cause) — restaurez alors `db.json.bak`.
 - **Premier démarrage** : si `db.json` n'existe pas, les recettes d'exemple sont enregistrées à la première connexion d'un utilisateur.
-- **Import ZIP** : *Gérer → Importer* — « Remplacer les recettes du même ID » ou « Ajouter comme nouvelles recettes ».
+- **Import ZIP** : *Menu → Gestion → Importer* — « Remplacer les recettes du même ID » ou « Ajouter comme nouvelles recettes ».
 
 ## API
 

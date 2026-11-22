@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, fetchUpdateStatus, loadInfo, startUpdate, type UpdateStatus } from "./api";
 import { useAuth } from "./auth";
-import { formatDateTime, useServerInfo } from "./VersionBadge";
+import { useServerInfo } from "./VersionBadge";
 
 type Phase = "idle" | "running" | "restarting" | "done" | "error";
 
@@ -88,12 +88,6 @@ export default function UpdatePanel() {
     <section className="space-y-3 border-t border-[var(--border)] pt-5">
       <div>
         <h3 className="font-display text-base">Mise à jour de l'application</h3>
-        {info && (
-          <p className="mt-1 text-xs leading-relaxed text-[var(--muted-foreground)]">
-            Version v{info.version}
-            {info.commit ? ` (${info.commit})` : ""} · serveur démarré le {formatDateTime(info.startedAt)}
-          </p>
-        )}
       </div>
 
       {info && !info.updateEnabled ? (

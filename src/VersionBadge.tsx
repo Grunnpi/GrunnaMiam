@@ -37,3 +37,20 @@ export default function VersionBadge() {
     </p>
   );
 }
+
+/** Section « Version » de la fenêtre de gestion : version, commit et heure de démarrage du serveur. */
+export function VersionDetails() {
+  const info = useServerInfo();
+  if (!info) return null;
+
+  return (
+    <section className="space-y-1 border-t border-[var(--border)] pt-5">
+      <h3 className="font-display text-base">Version</h3>
+      <p className="text-sm">
+        v{info.version}
+        {info.commit ? <span className="text-[var(--muted-foreground)]"> ({info.commit})</span> : null}
+      </p>
+      <p className="text-xs text-[var(--muted-foreground)]">Serveur démarré le {formatDateTime(info.startedAt)}</p>
+    </section>
+  );
+}

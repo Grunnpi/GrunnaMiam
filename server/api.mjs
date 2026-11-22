@@ -47,6 +47,7 @@ function validateRecipe(recipe) {
     isNumber(recipe.servings) &&
     ["Facile", "Moyen", "Difficile"].includes(recipe.difficulty) &&
     isString(recipe.description) &&
+    (recipe.origin === undefined || isString(recipe.origin)) &&
     Array.isArray(recipe.tags) &&
     recipe.tags.every(isString) &&
     Array.isArray(recipe.ingredients) &&
@@ -225,6 +226,7 @@ export function createApi({ dataDir, rootDir, updater }) {
       tags: recipe.tags,
       ingredients: recipe.ingredients.map((i) => ({ name: i.name, quantity: i.quantity })),
       description: recipe.description,
+      origin: typeof recipe.origin === "string" ? recipe.origin.trim() : "",
       steps: await Promise.all(
         recipe.steps.map(async (step) => ({
           title: step.title,

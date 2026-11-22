@@ -73,6 +73,7 @@ function buildBlocks(recipe: Recipe, options: Pick<Options, "mainPhoto" | "stepP
         </p>
         {options.mainPhoto && hasRealPhoto(recipe.image) && <img className="bk-photo" src={recipe.image} alt="" />}
         {recipe.description && <p className="bk-desc">{recipe.description}</p>}
+        {recipe.origin?.trim() && <p className="bk-origin">Origine : {recipe.origin.trim()}</p>}
       </div>
     ),
   });
