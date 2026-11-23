@@ -29,18 +29,18 @@ Les données sont stockées **sur le serveur** (pas dans le navigateur) et parta
 
 | | Visiteur (sans compte) | Utilisateur | Administrateur |
 |---|:-:|:-:|:-:|
-| Consulter, rechercher, filtrer, voir les listes | ✅ | ✅ | ✅ |
+| Consulter, rechercher, filtrer | ✅ | ✅ | ✅ |
 | Exporter les recettes (ZIP) | ❌ | ✅ | ✅ |
 | Imprimer un livret de recettes | ❌ | ✅ | ✅ |
 | Créer une recette depuis un texte (OCR) | ❌ | ✅ | ✅ |
 | Créer / modifier / supprimer une recette | ❌ | ✅ | ✅ |
 | Importer un ZIP, tout supprimer | ❌ | ✅ | ✅ |
-| Créer, modifier, supprimer des listes | ❌ | ✅ | ✅ |
+| Utiliser les listes de préférences : voir, afficher, créer, modifier, supprimer (☰ Menu → Mes listes) | ❌ | ✅ | ✅ |
 | Gérer les comptes | ❌ | ❌ | ✅ |
 | Mettre à jour l'application | ❌ | ❌ | ✅ |
 
 - **Recherche par titre** : insensible à la casse et aux accents ; tous les mots saisis doivent figurer dans le titre. Se combine avec les filtres ingrédients, tags et listes.
-- **Menu** (comptes connectés uniquement) : un seul bouton **☰ Menu** regroupe *Nouvelle recette* (saisir, ou depuis un texte), *Impression* (livret) et *Gestion* (export, import, version, mise à jour, suppression de toutes les recettes). Un visiteur sans compte ne voit que la recherche, les listes et la connexion.
+- **Menu** (comptes connectés uniquement) : un seul bouton **☰ Menu** regroupe *Nouvelle recette* (saisir, ou depuis un texte), *Listes* (mes listes de préférences), *Impression* (livret) et *Gestion* (export, import, version, mise à jour, suppression de toutes les recettes). Un visiteur sans compte ne voit que la recherche et la connexion.
 - **Origine** : champ facultatif de chaque recette (livre, site, personne…), affiché dans un bloc « Origine » sur la page de la recette et dans le livret ; un lien `https://…` est cliquable. Il se renseigne dans le formulaire et dans « Depuis un texte ».
 - **Tag `new`** : proposé par défaut à la création d'une recette (formulaire et « Depuis un texte »), pour retrouver les recettes récentes avec le filtre par tags ; il se retire comme n'importe quel tag.
 - **Petit écran** : la recherche (titre, ingrédients, tags) est **repliée par défaut** derrière la barre « 🔍 Rechercher et filtrer » (qui indique le nombre de filtres actifs) ; le header est réduit et la version s'affiche dans *Menu → Gestion*.
@@ -157,8 +157,8 @@ Avec *Pages A5 à la suite*, chaque page est imprimée sur du A5 (ou enregistré
 - **Gestion** : bouton de compte dans le header (« Connexion », puis votre nom). Un administrateur y crée des comptes (rôle *Utilisateur* ou *Administrateur*), réinitialise des mots de passe et supprime des comptes. Chacun peut changer son propre mot de passe.
 - **Mots de passe** : 12 caractères minimum, hachés avec scrypt (sel aléatoire par compte). Sont refusés : les mots de passe qui contiennent le nom d'utilisateur, une suite répétitive ou un fragment courant (« azerty », « password », « 123456 »…). Une phrase de plusieurs mots convient très bien. La règle s'applique à chaque création ou changement de mot de passe (les comptes existants gardent le leur tant qu'il n'est pas changé). Nom d'utilisateur : 3 à 32 caractères (lettres, chiffres, `.`, `-`, `_`), insensible à la casse.
 - **Sessions** : cookie `HttpOnly` contenant un jeton aléatoire (le serveur n'en garde que l'empreinte). Une session dure **7 jours au maximum** et se ferme après **48 h sans activité** (réglable : `SESSION_DAYS`, `SESSION_IDLE_HOURS`). Les sessions sont enregistrées dans `data/sessions.json` : elles survivent aux redémarrages et aux mises à jour. Changer ou réinitialiser un mot de passe ferme les sessions ouvertes de ce compte (seule la session qui change son propre mot de passe est conservée). Le cookie est marqué `Secure` quand le site est servi en HTTPS (y compris derrière un proxy inversé qui envoie `X-Forwarded-Proto: https`). Après une mise à jour depuis une version plus ancienne, tout le monde doit se reconnecter une fois.
-- **Appareils connectés** : dans *Mon compte → Mes appareils connectés*, chacun voit ses sessions ouvertes (appareil, adresse IP, dernière activité, date de fin), peut en déconnecter une, ou **déconnecter tous les autres appareils** d'un coup. Un administrateur peut aussi déconnecter tous les appareils d'un compte (bouton *Déconnecter* dans la liste des utilisateurs, qui indique aussi la dernière connexion de chacun).
-- **Journal de connexions** (administrateurs) : *Mon compte → Journal de connexions* liste les 200 derniers événements avec la date, l'adresse IP, l'appareil et **le nom du compte** : connexions réussies, échecs (nom saisi), blocages, déconnexions, changements ou réinitialisations de mot de passe, création/suppression de comptes, appareils déconnectés, recettes supprimées, mises à jour lancées. Le filtre « Échecs seulement » aide à repérer une tentative d'intrusion. Le fichier est `data/auth-log.jsonl` (une ligne JSON par événement, archivé en `auth-log.jsonl.1` au-delà de 1 Mo).
+- **Appareils connectés** : dans *Mon compte → Mes appareils connectés*, chacun voit ses sessions ouvertes (appareil, adresse IP, dernière activité, date de fin), peut en déconnecter une, ou **déconnecter tous les autres appareils** d'un coup. Un administrateur peut aussi déconnecter tous les appareils d'un compte (bouton *Déconnecter* dans la liste des utilisateurs, qui indique aussi la dernière connexion de chacun). Il peut aussi **changer le type d'un compte** (utilisateur ↔ administrateur) avec *Passer admin* / *Passer utilisateur* : le changement est immédiat, on ne peut pas modifier son propre type, et il reste toujours au moins un administrateur.
+- **Journal de connexions** (administrateurs) : *Mon compte → Journal de connexions* liste les 200 derniers événements avec la date, l'adresse IP, l'appareil et **le nom du compte** : connexions réussies, échecs (nom saisi), blocages, déconnexions, changements ou réinitialisations de mot de passe, création/suppression de comptes, changements de type de compte, appareils déconnectés, recettes supprimées, mises à jour lancées. Le filtre « Échecs seulement » aide à repérer une tentative d'intrusion. Le fichier est `data/auth-log.jsonl` (une ligne JSON par événement, archivé en `auth-log.jsonl.1` au-delà de 1 Mo).
 - **Protections** : 10 échecs de connexion en 10 minutes bloquent temporairement l'adresse IP ; les écritures « inter-sites » sont refusées (`SameSite=Lax` + en-tête `Sec-Fetch-Site`). L'adresse IP des clients est lue dans `X-Forwarded-For` uniquement si la requête vient de la machine elle-même (proxy inversé du DSM) ou si `TRUST_PROXY=1` : sinon cet en-tête, falsifiable, est ignoré.
 - **Session expirée** : si une sauvegarde est refusée, l'interface repasse en lecture seule et un bandeau demande de se reconnecter ; les modifications locales sont alors envoyées automatiquement.
 
@@ -324,7 +324,7 @@ Toutes les routes sont préfixées par `/api`, réponses en JSON.
 | `POST /recipes/delete` | connecté | Supprime des recettes (`{ "ids": [...] }`) |
 | `PUT /lists` | connecté | Remplace les listes de préférences |
 | `GET /users` · `POST /users` | administrateur | Liste / crée des comptes |
-| `DELETE /users/:id` · `POST /users/:id/password` · `POST /users/:id/revoke-sessions` | administrateur | Supprime un compte / réinitialise son mot de passe / déconnecte tous ses appareils |
+| `DELETE /users/:id` · `POST /users/:id/password` · `PUT /users/:id/role` · `POST /users/:id/revoke-sessions` | administrateur | Supprime un compte / réinitialise son mot de passe / change son type (`user` ou `admin`) / déconnecte tous ses appareils |
 | `GET /auth/log?limit=200` | administrateur | Journal des connexions |
 | `GET /update` · `POST /update` | administrateur | État / lancement de la mise à jour |
 

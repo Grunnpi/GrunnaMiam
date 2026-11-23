@@ -169,6 +169,9 @@ export const resetUserPassword = (id: number, password: string) =>
 export const revokeUserSessions = (id: number) =>
   request<{ revoked: number }>(`/users/${id}/revoke-sessions`, post(), false);
 
+export const setUserRole = (id: number, role: AuthUser["role"]) =>
+  request<ManagedUser>(`/users/${id}/role`, { method: "PUT", body: JSON.stringify({ role }) }, false);
+
 // ── Appareils connectés (sessions du compte courant) ──
 export interface SessionInfo {
   id: string;

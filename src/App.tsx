@@ -1786,6 +1786,8 @@ function RecipeDetail({
 
 // ── Preference lists ───────────────────────────────────────────────────────
 function PreferenceListsPanel({
+  open,
+  onClose,
   recipes,
   lists,
   recipeId,
@@ -1803,8 +1805,20 @@ function PreferenceListsPanel({
   onToggleRecipe: (listId: number, recipeId: number) => void;
   onDelete: (listId: number) => void;
   onSelectList?: (listId: number | null) => void;
+  /** Mode piloté (ouverture depuis le menu) : le bouton d'ouverture n'est alors pas affiché. */
+  open?: boolean;
+  onClose?: () => void;
 }) {
-  const [isOpen, setIsOpen] = useState(false);
+  const controlled = open !== undefined;
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isOpen = controlled ? open : internalOpen;
+  const setIsOpen = (value: boolean) => {
+    if (controlled) {
+      if (!value) onClose?.();
+    } else {
+      setInternalOpen(value);
+    }
+  };
   const [newListName, setNewListName] = useState("");
   const { canEdit } = useAuth();
   const selectedRecipe = recipeId === undefined
@@ -1824,6 +1838,7 @@ function PreferenceListsPanel({
 
   return (
     <>
+      {!controlled && (
       <button
         type="button"
         onClick={() => setIsOpen(true)}
@@ -1847,6 +1862,7 @@ function PreferenceListsPanel({
           </>
         )}
       </button>
+      )}
 
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -2276,6 +2292,13 @@ const recipeUrl = (id: number) => new URL(recipePath(id), window.location.origin
 
 // ── Menu de gestion (comptes connectés) ──
 function ManageMenu({
+  recipes,
+  preferenceLists,
+  selectedListId,
+  onCreateList,
+  onToggleListRecipe,
+  onDeleteList,
+  onSelectList,
   recipeCount,
   listCount,
   onNewRecipe,
@@ -2285,6 +2308,13 @@ function ManageMenu({
   onImport,
   onDeleteAll,
 }: {
+  recipes: Recipe[];
+  preferenceLists: PreferenceList[];
+  selectedListId: number | null;
+  onCreateList: (name: string, recipeId?: number) => void;
+  onToggleListRecipe: (listId: number, recipeId: number) => void;
+  onDeleteList: (listId: number) => void;
+  onSelectList: (listId: number | null) => void;
   recipeCount: number;
   listCount: number;
   onNewRecipe: () => void;
@@ -2296,6 +2326,7 @@ function ManageMenu({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [dataOpen, setDataOpen] = useState(false);
+  const [listsOpen, setListsOpen] = useState(false);
   const container = useRef<HTMLDivElement>(null);
 
   // Ferme le menu au clic/toucher en dehors, ou avec Échap
@@ -2353,6 +2384,17 @@ function ManageMenu({
           </button>
 
           <div className="my-1.5 border-t border-[var(--border)]" />
+          <p className={groupCls}>Listes</p>
+          <button type="button" role="menuitem" onClick={run(() => setListsOpen(true))} className={itemCls}>
+            <span aria-hidden>📑</span> Mes listes{preferenceLists.length ? ` (${preferenceLists.length})` : ""}
+            {selectedListId !== null && (
+              <span className="ml-auto rounded-full bg-[var(--primary)]/10 px-2 py-0.5 text-[10px] font-medium text-[var(--primary)]">
+                affichée
+              </span>
+            )}
+          </button>
+
+          <div className="my-1.5 border-t border-[var(--border)]" />
           <p className={groupCls}>Impression</p>
           <button type="button" role="menuitem" onClick={run(onOpenBooklet)} className={itemCls}>
             <span aria-hidden>📖</span> Livret imprimable
@@ -2370,6 +2412,18 @@ function ManageMenu({
           </button>
         </div>
       )}
+
+      <PreferenceListsPanel
+        open={listsOpen}
+        onClose={() => setListsOpen(false)}
+        recipes={recipes}
+        lists={preferenceLists}
+        selectedListId={selectedListId}
+        onCreate={onCreateList}
+        onToggleRecipe={onToggleListRecipe}
+        onDelete={onDeleteList}
+        onSelectList={onSelectList}
+      />
 
       <RecipeDataManager
         open={dataOpen}
@@ -2425,6 +2479,10 @@ function SearchView({
   const [searchOpen, setSearchOpen] = useState(
     () => typeof window === "undefined" || !window.matchMedia("(max-width: 639px)").matches
   );
+  // Les listes ne sont gérées que depuis le menu des comptes connectés : un visiteur ne garde pas de filtre de liste
+  useEffect(() => {
+    if (!canEdit) setSelectedListId(null);
+  }, [canEdit]);
 
   const availableIngredients = useMemo(
     () =>
@@ -2545,17 +2603,15 @@ function SearchView({
             <span className="text-xs bg-[var(--muted)] text-[var(--muted-foreground)] px-2 py-1 rounded-full hidden sm:inline">
               {filteredRecipes.length} recette{filteredRecipes.length !== 1 ? "s" : ""}
             </span>
-            <PreferenceListsPanel
-              recipes={recipes}
-              lists={preferenceLists}
-              selectedListId={selectedListId}
-              onCreate={onCreateList}
-              onToggleRecipe={onToggleListRecipe}
-              onDelete={onDeleteList}
-              onSelectList={setSelectedListId}
-            />
             {canEdit && (
               <ManageMenu
+                recipes={recipes}
+                preferenceLists={preferenceLists}
+                selectedListId={selectedListId}
+                onCreateList={onCreateList}
+                onToggleListRecipe={onToggleListRecipe}
+                onDeleteList={onDeleteList}
+                onSelectList={setSelectedListId}
                 recipeCount={recipes.length}
                 listCount={preferenceLists.length}
                 onNewRecipe={onNewRecipe}

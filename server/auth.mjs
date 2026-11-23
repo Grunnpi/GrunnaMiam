@@ -641,6 +641,28 @@ export function createAuth({ dataDir }) {
       void audit(req, "password_reset", { user: actor.username, target: updated.username });
     },
 
+    /** Change le type d'un autre compte (utilisateur ↔ administrateur). Effet immédiat : le rôle est relu à chaque requête. */
+    async setRole(req, actor, id, role) {
+      if (role !== "admin" && role !== "user") throw httpError(400, "Type de compte invalide.");
+      if (id === actor.id) throw httpError(400, "Vous ne pouvez pas modifier votre propre type de compte.");
+
+      const { target, previous } = await withLock(async () => {
+        const users = await readUsers();
+        const found = users.find((u) => u.id === id);
+        if (!found) throw httpError(404, "Utilisateur introuvable.");
+        if (found.role === role) return { target: found, previous: found.role };
+        const next = users.map((u) => (u.id === id ? { ...u, role } : u));
+        if (!next.some((u) => u.role === "admin")) throw httpError(400, "Il doit rester au moins un administrateur.");
+        await writeUsers(next);
+        return { target: found, previous: found.role };
+      });
+
+      if (previous !== role) {
+        void audit(req, "role_changed", { user: actor.username, target: target.username, detail: `${previous} → ${role}` });
+      }
+      return { ...publicUser(target), role, createdAt: target.createdAt, lastLoginAt: target.lastLoginAt ?? null };
+    },
+
     async revokeUserSessions(req, id, actor) {
       const target = (await readUsers()).find((u) => u.id === id);
       if (!target) throw httpError(404, "Utilisateur introuvable.");

@@ -275,6 +275,14 @@ function UsersAdmin({ currentUserId }: { currentUserId: number }) {
     if (value) void run(() => api.resetUserPassword(user.id, value), `Mot de passe de « ${user.username} » modifié.`);
   }
 
+  function changeRole(user: api.ManagedUser) {
+    const next = user.role === "admin" ? "user" : "admin";
+    const label = next === "admin" ? "administrateur" : "utilisateur simple";
+    if (window.confirm(`Passer « ${user.username} » en ${label} ?`)) {
+      void run(() => api.setUserRole(user.id, next), `« ${user.username} » est maintenant ${label}.`);
+    }
+  }
+
   function disconnect(user: api.ManagedUser) {
     if (window.confirm(`Déconnecter tous les appareils de « ${user.username} » ?`)) {
       void run(() => api.revokeUserSessions(user.id), `Appareils de « ${user.username} » déconnectés.`);
@@ -295,7 +303,7 @@ function UsersAdmin({ currentUserId }: { currentUserId: number }) {
       {users && (
         <ul className="divide-y divide-[var(--border)] overflow-hidden rounded-xl border border-[var(--border)]">
           {users.map((user) => (
-            <li key={user.id} className="flex items-center gap-3 px-4 py-2.5">
+            <li key={user.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">
                   {user.username}
@@ -316,6 +324,15 @@ function UsersAdmin({ currentUserId }: { currentUserId: number }) {
               </button>
               {user.id !== currentUserId && (
                 <>
+                <button
+                  type="button"
+                  onClick={() => changeRole(user)}
+                  disabled={busy}
+                  title={user.role === "admin" ? "Retirer les droits d'administrateur" : "Donner les droits d'administrateur"}
+                  className="text-xs text-[var(--primary)] hover:underline disabled:opacity-40"
+                >
+                  {user.role === "admin" ? "Passer utilisateur" : "Passer admin"}
+                </button>
                 <button
                   type="button"
                   onClick={() => disconnect(user)}
@@ -485,6 +502,7 @@ const EVENT_LABELS: Record<string, string> = {
   password_reset: "Mot de passe réinitialisé",
   user_created: "Compte créé",
   user_deleted: "Compte supprimé",
+  role_changed: "Type de compte modifié",
   session_revoked: "Appareil déconnecté",
   sessions_revoked: "Appareils déconnectés",
   recipes_deleted: "Recettes supprimées",
