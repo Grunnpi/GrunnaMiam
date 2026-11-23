@@ -3,6 +3,7 @@ import { deleteRecipes, loadData, onRetry, saveLists, saveRecipe } from "./api";
 import { useAuth } from "./auth";
 import BookletView from "./BookletView";
 import TextImportView from "./TextImportView";
+import { copyText } from "./geminiPrompt";
 import UpdatePanel from "./UpdatePanel";
 import UserMenu from "./UserMenu";
 import VersionBadge, { VersionDetails } from "./VersionBadge";
@@ -1514,6 +1515,31 @@ function RecipeDetail({
   );
   const { canEdit } = useAuth();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [shareState, setShareState] = useState<"idle" | "copied">("idle");
+
+  // Partage : feuille de partage du téléphone (iPhone, Android…) ; sinon le lien est copié.
+  async function share() {
+    const url = recipeUrl(recipe.id);
+    try {
+      if (typeof navigator.share === "function") {
+        await navigator.share({
+          title: recipe.title,
+          text: recipe.description?.trim() || `Recette : ${recipe.title}`,
+          url,
+        });
+        return;
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return; // partage annulé
+      // autre erreur : on se rabat sur la copie du lien
+    }
+    if (await copyText(url)) {
+      setShareState("copied");
+      window.setTimeout(() => setShareState("idle"), 3000);
+    } else {
+      window.prompt("Copiez ce lien :", url);
+    }
+  }
 
   function toggleStep(i: number) {
     setOpenSteps((prev) => {
@@ -1547,6 +1573,22 @@ function RecipeDetail({
             onToggleRecipe={onToggleListRecipe}
             onDelete={onDeleteList}
           />
+          <button
+            type="button"
+            onClick={() => void share()}
+            title="Partager cette recette (lien direct)"
+            className="shrink-0 text-xs border border-[var(--border)] text-[var(--muted-foreground)] px-3 py-1.5 rounded-lg hover:border-[var(--primary)] hover:text-[var(--primary)] transition-colors"
+          >
+            {shareState === "copied" ? (
+              "✓ Lien copié"
+            ) : (
+              <>
+                <span aria-hidden>↗</span>
+                <span className="hidden sm:inline"> Partager</span>
+                <span className="sr-only sm:hidden">Partager</span>
+              </>
+            )}
+          </button>
           {canEdit && (
           <>
           <button
@@ -2205,6 +2247,20 @@ function normalizeText(value: string) {
     .toLowerCase();
 }
 
+// ── Liens directs vers une recette (…/recette/123) ──
+const BASE_PATH = import.meta.env.BASE_URL; // "/" en général ; se termine toujours par "/"
+
+const recipePath = (id: number) => `${BASE_PATH}recette/${id}`;
+
+/** Numéro de recette si l'adresse est de la forme …/recette/123, sinon null. */
+function recipeIdFromPath(pathname: string): number | null {
+  const match = pathname.match(/(?:^|\/)recette\/(\d+)\/?$/);
+  return match ? Number(match[1]) : null;
+}
+
+/** Lien complet à partager (avec le nom de domaine). */
+const recipeUrl = (id: number) => new URL(recipePath(id), window.location.origin).toString();
+
 // ── Menu de gestion (comptes connectés) ──
 function ManageMenu({
   recipeCount,
@@ -2841,6 +2897,42 @@ export default function App() {
 
   useEffect(() => onRetry(() => setSyncTick((tick) => tick + 1)), []);
 
+  // ── Liens directs : l'adresse …/recette/123 ouvre la recette (lien partagé, favori, rechargement) ──
+  const [linkNotFound, setLinkNotFound] = useState(false);
+  const deepLinkHandled = useRef(false);
+
+  useEffect(() => {
+    if (loadState !== "ready" || deepLinkHandled.current) return;
+    deepLinkHandled.current = true;
+    const id = recipeIdFromPath(window.location.pathname);
+    if (id === null) return;
+    const recipe = recipes.find((item) => item.id === id);
+    if (recipe) {
+      setView({ name: "detail", recipe });
+    } else {
+      setLinkNotFound(true);
+      window.history.replaceState(null, "", BASE_PATH);
+    }
+  }, [loadState, recipes]);
+
+  // Boutons « précédent » et « suivant » du navigateur
+  useEffect(() => {
+    const onPopState = () => {
+      const id = recipeIdFromPath(window.location.pathname);
+      const recipe = id === null ? undefined : recipes.find((item) => item.id === id);
+      setView(recipe ? { name: "detail", recipe } : { name: "list" });
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [recipes]);
+
+  // L'adresse suit l'écran : …/recette/123 sur la page d'une recette, la racine sur la liste
+  useEffect(() => {
+    if (!deepLinkHandled.current) return;
+    const target = view.name === "detail" ? recipePath(view.recipe.id) : view.name === "list" ? BASE_PATH : null;
+    if (target !== null && window.location.pathname !== target) window.history.pushState(null, "", target);
+  }, [view]);
+
   // Synchronisation automatique : chaque modification (création, édition, import,
   // suppression, listes…) est comparée au dernier état du serveur puis envoyée.
   useEffect(() => {
@@ -3115,6 +3207,22 @@ export default function App() {
   }
 
   return (
+    <>
+      {linkNotFound && (
+        <div
+          aria-live="polite"
+          className="fixed inset-x-0 top-3 z-[60] mx-auto flex w-[calc(100%-1.5rem)] max-w-md items-center gap-3 rounded-xl border border-[var(--accent)]/40 bg-[var(--card)] px-4 py-3 text-sm shadow-lg"
+        >
+          <span className="flex-1">Cette recette n'existe plus, ou le lien est incorrect.</span>
+          <button
+            type="button"
+            onClick={() => setLinkNotFound(false)}
+            className="shrink-0 text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+          >
+            Fermer
+          </button>
+        </div>
+      )}
     <SearchView
       recipes={recipes}
       preferenceLists={preferenceLists}
@@ -3134,5 +3242,6 @@ export default function App() {
         );
       }}
     />
+    </>
   );
 }

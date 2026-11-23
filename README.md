@@ -13,16 +13,17 @@ Les données sont stockées **sur le serveur** (pas dans le navigateur) et parta
 1. [Fonctionnalités](#fonctionnalités)
 2. [Démarrage rapide (poste de dev)](#démarrage-rapide-poste-de-dev)
 3. [Créer une recette depuis un texte](#créer-une-recette-depuis-un-texte)
-4. [Imprimer un livret](#imprimer-un-livret)
-5. [Comptes et droits](#comptes-et-droits)
-6. [Installation sur un Synology](#installation-sur-un-synology)
-7. [Mise à jour depuis l'application](#mise-à-jour-depuis-lapplication)
-8. [Configuration](#configuration)
-9. [Scripts et commandes](#scripts-et-commandes)
-10. [Données et sauvegarde](#données-et-sauvegarde)
-11. [API](#api)
-12. [Structure du projet](#structure-du-projet)
-13. [Dépannage](#dépannage)
+4. [Partager une recette](#partager-une-recette)
+5. [Imprimer un livret](#imprimer-un-livret)
+6. [Comptes et droits](#comptes-et-droits)
+7. [Installation sur un Synology](#installation-sur-un-synology)
+8. [Mise à jour depuis l'application](#mise-à-jour-depuis-lapplication)
+9. [Configuration](#configuration)
+10. [Scripts et commandes](#scripts-et-commandes)
+11. [Données et sauvegarde](#données-et-sauvegarde)
+12. [API](#api)
+13. [Structure du projet](#structure-du-projet)
+14. [Dépannage](#dépannage)
 
 ## Fonctionnalités
 
@@ -45,6 +46,7 @@ Les données sont stockées **sur le serveur** (pas dans le navigateur) et parta
 - **Petit écran** : la recherche (titre, ingrédients, tags) est **repliée par défaut** derrière la barre « 🔍 Rechercher et filtrer » (qui indique le nombre de filtres actifs) ; le header est réduit et la version s'affiche dans *Menu → Gestion*.
 - **Header** : sur grand écran, affiche la version, le commit git et l'heure de démarrage du serveur.
 - **Suppression d'une recette** : bouton « Supprimer » sur la page de la recette, avec confirmation. Ses photos sont effacées du disque et elle est retirée des listes.
+- **Partage** : chaque recette a un lien direct (`…/recette/123`) et un bouton **↗ Partager**, accessibles à tous (voir [Partager une recette](#partager-une-recette)).
 
 ## Démarrage rapide (poste de dev)
 
@@ -107,6 +109,20 @@ Le prompt demande à Gemini de ne **pas réécrire** : il garde les phrases d'or
 > Gemini est un service externe : le texte ou la photo que vous lui donnez lui est transmis. Sans le prompt, l'analyse reste entièrement locale.
 
 L'analyse se fait dans le navigateur, sans envoyer le texte à un service externe. C'est une aide à la saisie : le résultat est à relire, surtout avec un OCR de mauvaise qualité.
+
+## Partager une recette
+
+Chaque recette a un **lien direct** de la forme `https://votre-adresse/recette/123`.
+
+- **Bouton ↗ Partager** (en haut de la page d'une recette, visible même sans compte) : sur iPhone et Android, il ouvre la feuille de partage du téléphone (Messages, WhatsApp, Mail…). Sur ordinateur, ou si le partage natif n'est pas disponible (il exige HTTPS), le lien est **copié** (« ✓ Lien copié ») ; si le navigateur refuse la copie, le lien s'affiche pour être copié à la main.
+- **Lien direct** : l'adresse du navigateur suit la recette ouverte (`/recette/123`), on peut donc la copier, l'ajouter aux favoris ou la recharger, et les boutons *précédent* / *suivant* du navigateur fonctionnent. Un lien vers une recette supprimée ouvre la liste avec le message « Cette recette n'existe plus, ou le lien est incorrect ».
+- **Aperçu dans les messageries** : pour une adresse `/recette/123`, le serveur ajoute au site le titre, une description (celle de la recette, sinon le temps, le nombre de personnes et les premiers ingrédients) et la photo : la messagerie affiche alors une carte. La vignette neutre des recettes sans photo n'est pas utilisée comme image.
+
+**Bon à savoir**
+
+- Le destinataire voit la recette **en lecture seule**, sans compte, comme n'importe quel visiteur.
+- Le lien ne fonctionne que pour les personnes qui **atteignent le serveur** : sur un NAS accessible uniquement depuis la maison, seuls les appareils du réseau local (ou connectés par VPN) peuvent l'ouvrir, et les messageries en ligne (WhatsApp, iMessage…) n'afficheront pas d'aperçu. Pour partager avec l'extérieur, il faut exposer le serveur en HTTPS (voir [Installation sur un Synology](#installation-sur-un-synology)).
+- Ce n'est pas un lien « secret » : le numéro de la recette suffit, et toutes les recettes sont de toute façon consultables par quiconque atteint le serveur.
 
 ## Imprimer un livret
 
@@ -193,7 +209,7 @@ Le serveur n'a besoin ni de Docker ni de dépendances : seulement Node.js, git (
 - Charge `deploy/config.sh` s'il existe (réglages locaux, non versionné).
 - Détecte `node` (ajoute `/usr/local/bin` et `/usr/bin` au `PATH`, car le Planificateur de tâches n'a pas toujours le bon).
 - Définit `GRUNNAMIAM_SUPERVISED=1` pour que le serveur sache qu'il sera relancé.
-- Lance le serveur **en boucle** : s'il s'arrête (plantage, mise à jour), il est relancé 3 secondes plus tard.
+- Lance le serveur **en boucle** : s'il s'arrête (plantage, mise à jour), il est relancé 3 secondes plus tard ; s'il s'arrête aussitôt après son démarrage (port refusé, erreur de configuration…), le délai double à chaque échec (3, 6, 12… puis 60 secondes maximum).
 - Écrit les journaux dans `logs/server.log` (archivé en `server.log.1` au-delà de 5 Mo).
 - Quand vous arrêtez la tâche, il arrête proprement le serveur.
 
@@ -314,6 +330,8 @@ Toutes les routes sont préfixées par `/api`, réponses en JSON.
 
 Limite de taille d'une requête : 40 Mo.
 
+En dehors de `/api` : `GET /recette/<id>` renvoie le site avec les balises d'aperçu (Open Graph) de la recette, pour les liens partagés ; l'application ouvre ensuite elle-même la recette.
+
 ## Structure du projet
 
 ```
@@ -331,7 +349,7 @@ src/
   recipeText.ts      Analyse du texte (OCR) : titre, ingrédients, étapes, rapprochement des ingrédients
   geminiPrompt.ts    Prompt de normalisation pour Gemini + fonction de copie dans le presse-papiers
 server/
-  index.mjs          Serveur de production (site + API)
+  index.mjs          Serveur de production (site + API + pages de recettes partagées)
   api.mjs            Routes de l'API, stockage des recettes et des images
   auth.mjs           Comptes, mots de passe, sessions, journal de connexions
   update.mjs         git pull + build + redémarrage
