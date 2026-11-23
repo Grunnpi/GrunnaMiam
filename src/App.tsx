@@ -1554,17 +1554,20 @@ function RecipeDetail({
     <div className="min-h-screen bg-[var(--background)]">
       {/* Nav header */}
       <header className="sticky top-0 z-30 bg-[var(--card)] border-b border-[var(--border)]">
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
+        <div className="max-w-3xl mx-auto px-3 py-2 sm:px-4 sm:py-3 flex items-center gap-1.5 sm:gap-3">
           <button
             onClick={onBack}
-            className="flex items-center gap-2 text-sm font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors shrink-0"
+            className="flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm font-medium text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors shrink-0"
           >
             <span className="text-base">←</span>
             <span className="hidden sm:inline">Chercher par ingrédients</span>
             <span className="sm:hidden">Retour</span>
           </button>
-          <span className="text-[var(--border)]">/</span>
-          <span className="text-sm text-[var(--foreground)] truncate font-medium flex-1">{recipe.title}</span>
+          <span className="hidden sm:inline text-[var(--border)]">/</span>
+          {/* Sur mobile le titre est déjà affiché dans la page : on gagne la place pour les boutons */}
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--foreground)]">
+            <span className="hidden sm:inline">{recipe.title}</span>
+          </span>
           <PreferenceListsPanel
             recipes={recipes}
             lists={preferenceLists}
@@ -1577,14 +1580,18 @@ function RecipeDetail({
             type="button"
             onClick={() => void share()}
             title="Partager cette recette (lien direct)"
-            className="shrink-0 text-xs border border-[var(--border)] text-[var(--muted-foreground)] px-3 py-1.5 rounded-lg hover:border-[var(--primary)] hover:text-[var(--primary)] transition-colors"
+            className="shrink-0 inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-lg border border-[var(--border)] px-2 text-sm text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)] sm:h-auto sm:min-w-0 sm:px-3 sm:py-1.5 sm:text-xs"
           >
             {shareState === "copied" ? (
-              "✓ Lien copié"
+              <>
+                <span>✓</span>
+                <span className="text-xs sm:hidden">Copié</span>
+                <span className="hidden sm:inline">Lien copié</span>
+              </>
             ) : (
               <>
                 <span aria-hidden>↗</span>
-                <span className="hidden sm:inline"> Partager</span>
+                <span className="hidden sm:inline">Partager</span>
                 <span className="sr-only sm:hidden">Partager</span>
               </>
             )}
@@ -1593,15 +1600,21 @@ function RecipeDetail({
           <>
           <button
             onClick={onEdit}
-            className="shrink-0 text-xs border border-[var(--border)] text-[var(--muted-foreground)] px-3 py-1.5 rounded-lg hover:border-[var(--primary)] hover:text-[var(--primary)] transition-colors"
+            title="Modifier la recette"
+            className="shrink-0 inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-lg border border-[var(--border)] px-2 text-sm text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)] sm:h-auto sm:min-w-0 sm:px-3 sm:py-1.5 sm:text-xs"
           >
-            ✏ Modifier
+            <span aria-hidden>✏</span>
+            <span className="hidden sm:inline">Modifier</span>
+            <span className="sr-only sm:hidden">Modifier</span>
           </button>
           <button
             onClick={() => setConfirmDelete(true)}
-            className="shrink-0 text-xs border border-[var(--border)] text-[var(--muted-foreground)] px-3 py-1.5 rounded-lg hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+            title="Supprimer la recette"
+            className="shrink-0 inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-lg border border-[var(--border)] px-2 text-sm text-[var(--muted-foreground)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] sm:h-auto sm:min-w-0 sm:px-3 sm:py-1.5 sm:text-xs"
           >
-            🗑 Supprimer
+            <span aria-hidden>🗑</span>
+            <span className="hidden sm:inline">Supprimer</span>
+            <span className="sr-only sm:hidden">Supprimer</span>
           </button>
           {confirmDelete && (
             <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -1816,7 +1829,7 @@ function PreferenceListsPanel({
         onClick={() => setIsOpen(true)}
         className={recipeId === undefined
           ? "text-xs border border-[var(--border)] text-[var(--muted-foreground)] px-3 py-1.5 rounded-lg hover:border-[var(--primary)] hover:text-[var(--primary)] transition-colors"
-          : "text-xs text-[var(--primary)] border border-[var(--primary)]/30 px-2.5 py-1.5 rounded-lg hover:bg-[var(--primary)]/5 transition-colors"}
+          : "shrink-0 inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-lg border border-[var(--primary)]/30 px-2 text-sm text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/5 sm:h-auto sm:min-w-0 sm:px-2.5 sm:py-1.5 sm:text-xs"}
       >
         {recipeId === undefined ? (
           selectedList ? (
@@ -1829,8 +1842,8 @@ function PreferenceListsPanel({
           )
         ) : (
           <>
-            <span className="hidden sm:inline">Ajouter à une liste</span>
-            <span className="sm:hidden">Listes</span>
+            <span aria-hidden className="sm:hidden">📑</span>
+            <span className="sr-only sm:not-sr-only">Ajouter à une liste</span>
           </>
         )}
       </button>
