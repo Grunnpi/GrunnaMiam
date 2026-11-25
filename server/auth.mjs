@@ -42,6 +42,20 @@ const DUMMY_SALT = "00".repeat(16);
 const MAX_FAILURES = 10;
 const FAILURE_WINDOW_MS = 10 * 60 * 1000;
 
+// Blocage par compte, en plus de la limitation par adresse IP : un attaquant qui change d'adresse (ou qui utilise un
+// ensemble de machines) pour tester les mots de passe d'un même compte est ralenti quand même.
+// Les premiers échecs sont tolérés (fautes de frappe), puis le délai double à chaque échec : 30 s, 1 min, 2 min… 15 min maximum.
+const ACCOUNT_FREE_ATTEMPTS = envNumber("LOGIN_FREE_ATTEMPTS", 4);
+const ACCOUNT_BASE_LOCK_MS = envNumber("LOGIN_LOCK_SECONDS", 30) * 1000;
+const ACCOUNT_MAX_LOCK_MS = envNumber("LOGIN_LOCK_MAX_MINUTES", 15) * 60 * 1000;
+const ACCOUNT_RESET_MS = 24 * HOUR_MS; // sans nouvel échec pendant ce délai, le compteur repart de zéro
+const MAX_TRACKED_ACCOUNTS = 5000;
+
+function formatWait(ms) {
+  const seconds = Math.ceil(ms / 1000);
+  return seconds < 60 ? `${seconds} s` : `${Math.ceil(seconds / 60)} min`;
+}
+
 // Fragments qui rendent un mot de passe prévisible, même s'il est long
 const COMMON_FRAGMENTS = [
   "password", "motdepasse", "passw0rd", "azerty", "qwerty", "123456", "654321", "111111", "000000", "abcdef",
@@ -427,6 +441,45 @@ export function createAuth({ dataDir }) {
     failures.set(key, [...recentFailures(key), Date.now()]);
   }
 
+  // ── Blocage par compte (en mémoire : un redémarrage du serveur remet les compteurs à zéro) ──
+  // Les noms inconnus sont comptés comme les autres : on ne peut pas déduire d'un blocage si un compte existe.
+  const accountFailures = new Map(); // nom en minuscules -> { count, lockedUntil, lastAt }
+  const accountKey = (username) => String(username ?? "").trim().toLowerCase().slice(0, 64);
+
+  /** Millisecondes restantes avant la fin du blocage du compte (0 s'il n'est pas bloqué). */
+  function accountLockRemaining(key) {
+    const entry = accountFailures.get(key);
+    if (!entry) return 0;
+    const now = Date.now();
+    if (now - entry.lastAt > ACCOUNT_RESET_MS) {
+      accountFailures.delete(key);
+      return 0;
+    }
+    return Math.max(0, entry.lockedUntil - now);
+  }
+
+  /** Enregistre un échec ; renvoie la durée (ms) du blocage qui en résulte, ou 0. */
+  function recordAccountFailure(key) {
+    if (!key) return 0;
+    const now = Date.now();
+    let entry = accountFailures.get(key);
+    if (!entry || now - entry.lastAt > ACCOUNT_RESET_MS) entry = { count: 0, lockedUntil: 0, lastAt: now };
+
+    entry.count += 1;
+    entry.lastAt = now;
+    const excess = entry.count - ACCOUNT_FREE_ATTEMPTS;
+    if (excess > 0) {
+      entry.lockedUntil = now + Math.min(ACCOUNT_MAX_LOCK_MS, ACCOUNT_BASE_LOCK_MS * 2 ** (excess - 1));
+    }
+    accountFailures.delete(key); // réinsère en fin de table : les plus anciennes entrées sont supprimées en premier
+    accountFailures.set(key, entry);
+    while (accountFailures.size > MAX_TRACKED_ACCOUNTS) accountFailures.delete(accountFailures.keys().next().value);
+
+    return Math.max(0, entry.lockedUntil - now);
+  }
+
+  const clearAccountFailures = (key) => accountFailures.delete(key);
+
   // ── Gestion des comptes ──────────────────────────────────────────────────
   async function createUser(req, input, actor) {
     const { username, password, role } = input ?? {};
@@ -524,6 +577,13 @@ export function createAuth({ dataDir }) {
         throw error;
       }
 
+      const key = accountKey(username);
+      const wait = accountLockRemaining(key);
+      if (wait > 0) {
+        void audit(req, "login_blocked", { user: safeName(username), detail: `compte verrouillé, encore ${formatWait(wait)}` });
+        throw httpError(429, `Trop d'échecs sur ce compte. Réessayez dans ${formatWait(wait)}.`);
+      }
+
       const users = await readUsers();
       const user =
         typeof username === "string"
@@ -533,9 +593,17 @@ export function createAuth({ dataDir }) {
         typeof password === "string" && password.length <= MAX_PASSWORD_LENGTH && (await verifyPassword(user, password));
       if (!valid) {
         recordFailure(req);
-        void audit(req, "login_failed", { user: safeName(username), detail: user ? "mot de passe incorrect" : "compte inconnu" });
-        throw httpError(401, "Identifiant ou mot de passe incorrect.");
+        const lockMs = recordAccountFailure(key);
+        const reason = user ? "mot de passe incorrect" : "compte inconnu";
+        void audit(req, "login_failed", {
+          user: safeName(username),
+          detail: lockMs > 0 ? `${reason} · compte verrouillé ${formatWait(lockMs)}` : reason,
+        });
+        throw lockMs > 0
+          ? httpError(429, `Identifiant ou mot de passe incorrect. Trop d'échecs : ce compte est verrouillé pendant ${formatWait(lockMs)}.`)
+          : httpError(401, "Identifiant ou mot de passe incorrect.");
       }
+      clearAccountFailures(key);
 
       await withLock(async () => {
         const all = await readUsers();
@@ -566,13 +634,26 @@ export function createAuth({ dataDir }) {
         void audit(req, "login_blocked", { user: user.username, detail: "changement de mot de passe" });
         throw error;
       }
+      const accountId = accountKey(user.username);
+      const lockedFor = accountLockRemaining(accountId);
+      if (lockedFor > 0) {
+        void audit(req, "login_blocked", { user: user.username, detail: `compte verrouillé, encore ${formatWait(lockedFor)} (changement de mot de passe)` });
+        throw httpError(429, `Trop d'échecs sur ce compte. Réessayez dans ${formatWait(lockedFor)}.`);
+      }
       const { current, next } = input ?? {};
       validatePassword(next, user.username);
       if (typeof current !== "string" || !(await verifyPassword(user, current))) {
         recordFailure(req);
-        void audit(req, "login_failed", { user: user.username, detail: "mot de passe actuel incorrect (changement de mot de passe)" });
-        throw httpError(403, "Mot de passe actuel incorrect.");
+        const lockMs = recordAccountFailure(accountId);
+        void audit(req, "login_failed", {
+          user: user.username,
+          detail: `mot de passe actuel incorrect (changement de mot de passe)${lockMs > 0 ? ` · compte verrouillé ${formatWait(lockMs)}` : ""}`,
+        });
+        throw lockMs > 0
+          ? httpError(429, `Mot de passe actuel incorrect. Trop d'échecs : ce compte est verrouillé pendant ${formatWait(lockMs)}.`)
+          : httpError(403, "Mot de passe actuel incorrect.");
       }
+      clearAccountFailures(accountId);
       const updated = await setPassword(user.id, next);
       session.v = updated.sessionVersion; // la session courante reste valide
       await dropSessions(user.id, session.id);
@@ -617,7 +698,30 @@ export function createAuth({ dataDir }) {
 
     // ── Administration des comptes ──
     async listUsers() {
-      return (await readUsers()).map((u) => ({ ...publicUser(u), createdAt: u.createdAt, lastLoginAt: u.lastLoginAt ?? null }));
+      return (await readUsers()).map((u) => {
+        const wait = accountLockRemaining(accountKey(u.username));
+        return {
+          ...publicUser(u),
+          createdAt: u.createdAt,
+          lastLoginAt: u.lastLoginAt ?? null,
+          lockedUntil: wait > 0 ? new Date(Date.now() + wait).toISOString() : null,
+        };
+      });
+    },
+
+    /** Lève tout de suite le blocage temporaire d'un compte (trop d'échecs de connexion). */
+    async unlockAccount(req, id, actor) {
+      const target = (await readUsers()).find((u) => u.id === id);
+      if (!target) throw httpError(404, "Utilisateur introuvable.");
+      const key = accountKey(target.username);
+      const wasLocked = accountLockRemaining(key) > 0;
+      clearAccountFailures(key);
+      void audit(req, "account_unlocked", {
+        user: actor.username,
+        target: target.username,
+        detail: wasLocked ? "blocage levé" : "compteur d'échecs remis à zéro",
+      });
+      return { unlocked: wasLocked };
     },
 
     createUser,

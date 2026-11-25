@@ -18,3 +18,10 @@
 # (par exemple un autre serveur du réseau) : l'adresse IP des clients est alors lue dans X-Forwarded-For.
 # Derrière le proxy inversé du DSM (même machine), ce n'est pas nécessaire.
 # export TRUST_PROXY=1
+
+# ── Blocage d'un compte après des échecs de connexion ─────────────────────────────────────────────────
+# (en plus de la limite par adresse IP). Après N échecs, le compte est bloqué 30 s, puis le délai double à chaque échec
+# (1 min, 2 min, 4 min…) jusqu'au maximum ; une connexion réussie remet le compteur à zéro.
+# export LOGIN_FREE_ATTEMPTS=4      # échecs tolérés avant le premier blocage (défaut : 4)
+# export LOGIN_LOCK_SECONDS=30      # durée du premier blocage, en secondes (défaut : 30)
+# export LOGIN_LOCK_MAX_MINUTES=15  # durée maximale d'un blocage, en minutes (défaut : 15)

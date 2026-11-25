@@ -141,6 +141,8 @@ export interface ManagedUser extends AuthUser {
   createdAt: string;
   /** Dernière connexion réussie (null si jamais connecté). */
   lastLoginAt: string | null;
+  /** Fin du blocage temporaire après trop d'échecs de connexion (null si le compte n'est pas bloqué). */
+  lockedUntil: string | null;
 }
 
 export const fetchMe = () => request<AuthState>("/auth/me", { cache: "no-store" }, false);
@@ -168,6 +170,8 @@ export const resetUserPassword = (id: number, password: string) =>
 
 export const revokeUserSessions = (id: number) =>
   request<{ revoked: number }>(`/users/${id}/revoke-sessions`, post(), false);
+
+export const unlockUser = (id: number) => request<{ unlocked: boolean }>(`/users/${id}/unlock`, post(), false);
 
 export const setUserRole = (id: number, role: AuthUser["role"]) =>
   request<ManagedUser>(`/users/${id}/role`, { method: "PUT", body: JSON.stringify({ role }) }, false);

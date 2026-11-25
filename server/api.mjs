@@ -345,6 +345,11 @@ export function createApi({ dataDir, rootDir, updater }) {
       return sendJson(res, 200, await auth.setRole(req, actor, Number(match[1]), body?.role));
     }
 
+    if ((match = pathname.match(/^\/api\/users\/(\d+)\/unlock$/)) && method === "POST") {
+      const actor = await auth.requireAdmin(req);
+      return sendJson(res, 200, await auth.unlockAccount(req, Number(match[1]), actor));
+    }
+
     if ((match = pathname.match(/^\/api\/users\/(\d+)\/revoke-sessions$/)) && method === "POST") {
       const actor = await auth.requireAdmin(req);
       return sendJson(res, 200, await auth.revokeUserSessions(req, Number(match[1]), actor));

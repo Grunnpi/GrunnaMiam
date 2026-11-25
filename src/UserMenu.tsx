@@ -275,6 +275,10 @@ function UsersAdmin({ currentUserId }: { currentUserId: number }) {
     if (value) void run(() => api.resetUserPassword(user.id, value), `Mot de passe de « ${user.username} » modifié.`);
   }
 
+  function unlock(user: api.ManagedUser) {
+    void run(() => api.unlockUser(user.id), `Compte « ${user.username} » déverrouillé.`);
+  }
+
   function changeRole(user: api.ManagedUser) {
     const next = user.role === "admin" ? "user" : "admin";
     const label = next === "admin" ? "administrateur" : "utilisateur simple";
@@ -313,7 +317,22 @@ function UsersAdmin({ currentUserId }: { currentUserId: number }) {
                   {user.role === "admin" ? "Administrateur" : "Utilisateur"} ·{" "}
                   {user.lastLoginAt ? `connecté le ${formatDateTime(user.lastLoginAt)}` : "jamais connecté"}
                 </p>
+                {user.lockedUntil && (
+                  <p className="text-xs font-medium text-[var(--accent)]">
+                    🔒 Verrouillé après trop d'échecs, jusqu'à {formatDateTime(user.lockedUntil)}
+                  </p>
+                )}
               </div>
+              {user.lockedUntil && (
+                <button
+                  type="button"
+                  onClick={() => unlock(user)}
+                  disabled={busy}
+                  className="text-xs font-medium text-[var(--accent)] hover:underline disabled:opacity-40"
+                >
+                  Déverrouiller
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => resetPassword(user)}
@@ -503,6 +522,7 @@ const EVENT_LABELS: Record<string, string> = {
   user_created: "Compte créé",
   user_deleted: "Compte supprimé",
   role_changed: "Type de compte modifié",
+  account_unlocked: "Compte déverrouillé",
   session_revoked: "Appareil déconnecté",
   sessions_revoked: "Appareils déconnectés",
   recipes_deleted: "Recettes supprimées",
