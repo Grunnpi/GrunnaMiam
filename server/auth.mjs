@@ -30,7 +30,17 @@ const SESSION_IDLE_MS = envNumber("SESSION_IDLE_HOURS", 48) * HOUR_MS;
 const TOUCH_INTERVAL_MS = 5 * 60 * 1000; // la « dernière activité » n'est mise à jour que toutes les 5 minutes
 const FLUSH_DELAY_MS = 20 * 1000;
 const MAX_SESSIONS_PER_USER = 20;
-const TRUST_PROXY = process.env.TRUST_PROXY === "1";
+// Proxys inverses de confiance (Nginx Proxy Manager, Traefik, proxy du DSM…) : on ne lit X-Forwarded-For que dans les
+// requêtes qui viennent d'eux ; sinon cet en-tête, falsifiable, est ignoré et l'adresse affichée est celle de l'appelant.
+//   (rien)                      seule la machine elle-même (127.0.0.1) est de confiance
+//   TRUST_PROXY=192.168.1.20    cette adresse (liste séparée par des virgules) : recommandé
+//   TRUST_PROXY=1               toute adresse : à éviter si le serveur est joignable sans passer par le proxy
+const TRUSTED_PROXIES = new Set(["127.0.0.1", "::1"]);
+let TRUST_ALL_PROXIES = false;
+for (const item of (process.env.TRUST_PROXY ?? "").split(",").map((value) => value.trim()).filter(Boolean)) {
+  if (item === "1" || item.toLowerCase() === "true") TRUST_ALL_PROXIES = true;
+  else TRUSTED_PROXIES.add(item.replace(/^::ffff:/, ""));
+}
 
 const LOG_MAX_BYTES = 1024 * 1024; // au-delà : le journal est archivé en auth-log.jsonl.1
 
@@ -70,6 +80,34 @@ function httpError(status, message) {
 const publicUser = (user) => ({ id: user.id, username: user.username, role: user.role });
 const sha256Hex = (value) => crypto.createHash("sha256").update(value).digest("hex");
 
+// Libellés français des événements du journal (renvoyés avec chaque entrée, et pris en compte par la recherche libre)
+const EVENT_LABELS = {
+  login_success: "Connexion",
+  login_failed: "Échec de connexion",
+  login_blocked: "Connexion bloquée (trop d'essais)",
+  logout: "Déconnexion",
+  setup: "Création du premier administrateur",
+  password_changed: "Mot de passe modifié",
+  password_reset: "Mot de passe réinitialisé",
+  user_created: "Compte créé",
+  user_deleted: "Compte supprimé",
+  role_changed: "Type de compte modifié",
+  account_unlocked: "Compte déverrouillé",
+  session_revoked: "Appareil déconnecté",
+  sessions_revoked: "Appareils déconnectés",
+  recipes_deleted: "Recettes supprimées",
+  update_started: "Mise à jour lancée",
+};
+const FAILURE_EVENTS = new Set(["login_failed", "login_blocked"]);
+
+// Minuscules, sans accents : « échec » trouve « Echec »
+const normalizeSearch = (value) =>
+  String(value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
 function readCookie(req, name) {
   for (const part of (req.headers.cookie ?? "").split(";")) {
     const [key, ...rest] = part.trim().split("=");
@@ -79,20 +117,24 @@ function readCookie(req, name) {
 }
 
 // ── Adresse IP et appareil ───────────────────────────────────────────────────
-const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+// (les proxys de confiance sont définis plus haut : variable TRUST_PROXY)
 
 /**
  * Adresse IP du client. Derrière un proxy inversé de confiance (même machine, ou TRUST_PROXY=1), on lit
  * la dernière valeur de X-Forwarded-For ajoutée par ce proxy ; sinon l'en-tête est ignoré (falsifiable).
  */
 function clientIp(req) {
-  const remote = req.socket.remoteAddress ?? "?";
+  const remote = (req.socket.remoteAddress ?? "?").replace(/^::ffff:/, "");
   const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string" && (TRUST_PROXY || LOOPBACK.has(remote))) {
+  if (typeof forwarded === "string" && (TRUST_ALL_PROXIES || TRUSTED_PROXIES.has(remote))) {
     const last = forwarded.split(",").pop().trim();
     if (last) return last.replace(/^::ffff:/, "");
   }
-  return remote.replace(/^::ffff:/, "");
+  const real = req.headers["x-real-ip"];
+  if (typeof real === "string" && real.trim() && (TRUST_ALL_PROXIES || TRUSTED_PROXIES.has(remote))) {
+    return real.trim().replace(/^::ffff:/, "");
+  }
+  return remote;
 }
 
 function describeDevice(userAgent = "") {
@@ -216,6 +258,51 @@ export function createAuth({ dataDir }) {
       })
       .catch((error) => console.error("[auth] journal :", error.message));
     return logChain;
+  }
+
+  /**
+   * Recherche dans le journal (fichier courant + archive), des plus récents aux plus anciens.
+   * Filtres : user (nom du compte, ou du compte visé), from / to (dates ISO 8601), q (recherche libre : tous les mots
+   * doivent se trouver dans l'événement, son libellé, le nom, l'IP, l'appareil ou le détail), failures (échecs seulement).
+   * Renvoie { entries (au plus `limit`), total (nombre de correspondances) }.
+   */
+  async function searchAuditLog({ user, from, to, q, failures = false, limit = 200 } = {}) {
+    await logChain;
+    const lines = [];
+    for (const file of [`${logFile}.1`, logFile]) {
+      try {
+        lines.push(...(await fs.readFile(file, "utf8")).split("\n").filter(Boolean));
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
+
+    const userNeedle = normalizeSearch(user).slice(0, 100);
+    const words = normalizeSearch(q).slice(0, 200).split(/\s+/).filter(Boolean);
+    const matches = [];
+
+    for (let i = lines.length - 1; i >= 0; i--) {
+      let entry;
+      try {
+        entry = JSON.parse(lines[i]);
+      } catch {
+        continue;
+      }
+      if (from && entry.t < from) continue;
+      if (to && entry.t > to) continue;
+      if (failures && !FAILURE_EVENTS.has(entry.event)) continue;
+      if (userNeedle && !normalizeSearch(`${entry.user ?? ""} ${entry.target ?? ""}`).includes(userNeedle)) continue;
+
+      const label = EVENT_LABELS[entry.event] ?? entry.event;
+      if (words.length > 0) {
+        const haystack = normalizeSearch(
+          [label, entry.event, entry.user, entry.target, entry.detail, entry.ip, entry.device].filter(Boolean).join(" ")
+        );
+        if (!words.every((word) => haystack.includes(word))) continue;
+      }
+      matches.push({ ...entry, label });
+    }
+    return { total: matches.length, entries: matches.slice(0, limit) };
   }
 
   async function readAuditLog(limit = 200) {
@@ -530,6 +617,7 @@ export function createAuth({ dataDir }) {
     requireSession,
     audit,
     readAuditLog,
+    searchAuditLog,
 
     /** À appeler avant l'arrêt du serveur : écrit les sessions en attente. */
     flush,

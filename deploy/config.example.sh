@@ -17,7 +17,11 @@
 # À activer SEULEMENT si le serveur est derrière un proxy inversé de confiance qui n'est pas sur la même machine
 # (par exemple un autre serveur du réseau) : l'adresse IP des clients est alors lue dans X-Forwarded-For.
 # Derrière le proxy inversé du DSM (même machine), ce n'est pas nécessaire.
-# export TRUST_PROXY=1
+# Derrière Nginx Proxy Manager (ou tout autre proxy) : sans ce réglage, le journal de connexions et le blocage par
+# adresse IP voient toujours l'adresse du proxy. Indiquez ici l'adresse du proxy TELLE QUE LE SERVEUR LA VOIT (c'est
+# celle qui s'affiche dans le journal) ; plusieurs adresses possibles, séparées par des virgules.
+# export TRUST_PROXY=192.168.1.20
+# (TRUST_PROXY=1 fait confiance à n'importe quelle adresse : à éviter si le serveur est joignable sans passer par le proxy.)
 
 # ── Blocage d'un compte après des échecs de connexion ─────────────────────────────────────────────────
 # (en plus de la limite par adresse IP). Après N échecs, le compte est bloqué 30 s, puis le délai double à chaque échec

@@ -205,10 +205,39 @@ export interface AuditEntry {
   detail?: string | null;
   ip: string;
   device: string;
+  /** Libellé français de l'événement, fourni par le serveur. */
+  label?: string;
 }
 
-export const fetchAuditLog = (limit = 200) =>
-  request<AuditEntry[]>(`/auth/log?limit=${limit}`, { cache: "no-store" }, false);
+export interface AuditFilters {
+  /** Nom de compte (ou de compte visé) : correspondance partielle, sans tenir compte de la casse ni des accents. */
+  user?: string;
+  /** Recherche libre : tous les mots doivent se trouver dans l'événement. */
+  q?: string;
+  /** Bornes de dates (ISO 8601). */
+  from?: string;
+  to?: string;
+  /** Échecs et blocages de connexion seulement. */
+  failures?: boolean;
+  limit?: number;
+}
+
+export interface AuditResult {
+  entries: AuditEntry[];
+  /** Nombre total d'événements correspondant aux filtres (entries n'en contient que les plus récents). */
+  total: number;
+}
+
+export const fetchAuditLog = (filters: AuditFilters = {}) => {
+  const params = new URLSearchParams();
+  if (filters.user?.trim()) params.set("user", filters.user.trim());
+  if (filters.q?.trim()) params.set("q", filters.q.trim());
+  if (filters.from) params.set("from", filters.from);
+  if (filters.to) params.set("to", filters.to);
+  if (filters.failures) params.set("failures", "1");
+  params.set("limit", String(filters.limit ?? 200));
+  return request<AuditResult>(`/auth/log?${params}`, { cache: "no-store" }, false);
+};
 
 // ── Informations serveur & mise à jour (administrateurs) ──────────────────
 export interface ServerInfo {

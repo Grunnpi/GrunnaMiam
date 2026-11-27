@@ -535,23 +535,54 @@ function AuditLog() {
   const [open, setOpen] = useState(false);
   const [entries, setEntries] = useState<api.AuditEntry[] | null>(null);
   const [failuresOnly, setFailuresOnly] = useState(false);
+  const [userFilter, setUserFilter] = useState("");
+  const [query, setQuery] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [total, setTotal] = useState(0);
   const [error, setError] = useState("");
+
+  const hasFilters = Boolean(userFilter || query || fromDate || toDate || failuresOnly);
+
+  function resetFilters() {
+    setUserFilter("");
+    setQuery("");
+    setFromDate("");
+    setToDate("");
+    setFailuresOnly(false);
+  }
 
   async function load() {
     setError("");
     try {
-      setEntries(await api.fetchAuditLog(200));
+      const result = await api.fetchAuditLog({
+        user: userFilter,
+        q: query,
+        // Les dates saisies sont des jours du fuseau horaire de l'utilisateur : du début du premier jour à la fin du dernier
+        from: fromDate ? new Date(`${fromDate}T00:00:00`).toISOString() : undefined,
+        to: toDate ? new Date(`${toDate}T23:59:59.999`).toISOString() : undefined,
+        failures: failuresOnly,
+        limit: 200,
+      });
+      setEntries(result.entries);
+      setTotal(result.total);
     } catch (err) {
       setError(errorMessage(err, "Impossible de charger le journal."));
     }
   }
 
   useEffect(() => {
-    if (open && entries === null) void load();
+    if (!open) return;
+    // Recharge à l'ouverture puis à chaque changement de filtre (avec un court délai pendant la frappe)
+    const timer = window.setTimeout(() => void load(), entries === null ? 0 : 300);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, userFilter, query, fromDate, toDate, failuresOnly]);
 
-  const shown = entries ? (failuresOnly ? entries.filter((entry) => FAILURE_EVENTS.has(entry.event)) : entries) : [];
+  const shown = entries ?? [];
+  const userSuggestions = Array.from(
+    new Set((entries ?? []).flatMap((entry) => [entry.user, entry.target]).filter((value): value is string => Boolean(value)))
+  );
 
   return (
     <section className="space-y-3 border-t border-[var(--border)] pt-5">
@@ -567,6 +598,52 @@ function AuditLog() {
 
       {open && (
         <>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Recherche libre (nom, adresse IP, appareil, détail…)"
+              aria-label="Recherche libre dans le journal"
+              autoComplete="off"
+              className={`${authInputCls} sm:col-span-2`}
+            />
+            <input
+              type="text"
+              value={userFilter}
+              onChange={(event) => setUserFilter(event.target.value)}
+              list="audit-users"
+              placeholder="Utilisateur"
+              aria-label="Filtrer par utilisateur"
+              autoComplete="off"
+              className={authInputCls}
+            />
+            <datalist id="audit-users">
+              {userSuggestions.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={fromDate}
+                max={toDate || undefined}
+                onChange={(event) => setFromDate(event.target.value)}
+                aria-label="Du"
+                className={`${authInputCls} min-w-0`}
+              />
+              <span className="text-xs text-[var(--muted-foreground)]">→</span>
+              <input
+                type="date"
+                value={toDate}
+                min={fromDate || undefined}
+                onChange={(event) => setToDate(event.target.value)}
+                aria-label="Au"
+                className={`${authInputCls} min-w-0`}
+              />
+            </div>
+          </div>
+
           <div className="flex flex-wrap items-center justify-between gap-2">
             <label className="flex cursor-pointer items-center gap-2 text-xs">
               <input
@@ -577,14 +654,28 @@ function AuditLog() {
               />
               Échecs seulement
             </label>
-            <button type="button" onClick={() => void load()} className="text-xs text-[var(--primary)] hover:underline">
-              Actualiser
-            </button>
+            <span className="flex items-center gap-3">
+              {hasFilters && (
+                <button type="button" onClick={resetFilters} className="text-xs text-[var(--muted-foreground)] hover:text-[var(--accent)]">
+                  Réinitialiser
+                </button>
+              )}
+              <button type="button" onClick={() => void load()} className="text-xs text-[var(--primary)] hover:underline">
+                Actualiser
+              </button>
+            </span>
           </div>
 
           {error && <Notice type="error">{error}</Notice>}
           {entries && shown.length === 0 && !error && (
             <p className="text-xs text-[var(--muted-foreground)]">Aucun événement.</p>
+          )}
+
+          {entries && (
+            <p className="text-xs text-[var(--muted-foreground)]">
+              {total} événement{total > 1 ? "s" : ""}
+              {total > shown.length ? ` · affichage des ${shown.length} plus récents (affinez les filtres)` : ""}
+            </p>
           )}
 
           <ul className="max-h-80 divide-y divide-[var(--border)] overflow-y-auto rounded-xl border border-[var(--border)]">
@@ -595,7 +686,7 @@ function AuditLog() {
                     FAILURE_EVENTS.has(entry.event) ? "text-[var(--accent)]" : entry.event === "login_success" ? "text-[var(--primary)]" : ""
                   }`}
                 >
-                  {EVENT_LABELS[entry.event] ?? entry.event}
+                  {entry.label ?? EVENT_LABELS[entry.event] ?? entry.event}
                   <span className="font-normal text-[var(--foreground)]">
                     {entry.user ? ` · ${entry.user}` : ""}
                     {entry.target ? ` → ${entry.target}` : ""}

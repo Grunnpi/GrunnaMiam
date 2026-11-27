@@ -335,8 +335,23 @@ export function createApi({ dataDir, rootDir, updater }) {
     // ── Journal des connexions (administrateurs) ──
     if (pathname === "/api/auth/log" && method === "GET") {
       await auth.requireAdmin(req);
-      const limit = Number(new URL(req.url ?? "/", "http://localhost").searchParams.get("limit")) || 200;
-      return sendJson(res, 200, await auth.readAuditLog(Math.min(Math.max(limit, 1), 1000)));
+      const params = new URL(req.url ?? "/", "http://localhost").searchParams;
+      const isoDate = (value) => {
+        const time = value ? Date.parse(value) : NaN;
+        return Number.isNaN(time) ? undefined : new Date(time).toISOString();
+      };
+      return sendJson(
+        res,
+        200,
+        await auth.searchAuditLog({
+          user: params.get("user") ?? undefined,
+          q: params.get("q") ?? undefined,
+          from: isoDate(params.get("from")),
+          to: isoDate(params.get("to")),
+          failures: params.get("failures") === "1",
+          limit: Math.min(500, Math.max(1, Number(params.get("limit")) || 200)),
+        })
+      );
     }
 
     if ((match = pathname.match(/^\/api\/users\/(\d+)\/role$/)) && method === "PUT") {
